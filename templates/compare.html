@@ -1,0 +1,487 @@
+{% extends "base.html" %}
+
+{% block title %}Compare Issues - State Issues Tracker{% endblock %}
+
+{% block content %}
+<div class="container-lg py-5">
+    <div class="row mb-4">
+        <div class="col-12">
+            <h1 class="display-5 mb-2">
+                <i class="bi bi-diagram-3"></i> Compare Across States
+            </h1>
+            <p class="text-muted">Compare issues and results across different states</p>
+        </div>
+    </div>
+
+    <!-- Selection Controls -->
+    <div class="row mb-5">
+        <div class="col-md-6">
+            <div class="card">
+                <div class="card-body">
+                    <h5 class="card-title">Filter by Tag</h5>
+                    <p class="text-muted small">Select a tag to compare states with matching issues</p>
+                    <select id="tagSelect" class="form-select">
+                        <option value="">All Issues</option>
+                        {% for tag in tags %}
+                        <option value="{{ tag['id'] }}">{{ tag['name']|title }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-6">
+            <div class="card">
+                <div class="card-body">
+                    <h5 class="card-title">Comparison Controls</h5>
+                    <div class="row g-2">
+                        <div class="col-md-4">
+                            <label class="form-label small">Min Issues</label>
+                            <input id="minTotalFilter" type="number" class="form-control" min="0" value="1">
+                        </div>
+                        <div class="col-md-4">
+                            <label class="form-label small">Sort By</label>
+                            <select id="sortBySelect" class="form-select">
+                                <option value="success_rate" selected>Success Rate</option>
+                                <option value="total">Total Issues</option>
+                                <option value="open">Open Issues</option>
+                                <option value="cancelled">Cancelled</option>
+                            </select>
+                        </div>
+                        <div class="col-md-4">
+                            <label class="form-label small">Show</label>
+                            <select id="topNSelect" class="form-select">
+                                <option value="10">Top 10</option>
+                                <option value="25">Top 25</option>
+                                <option value="50" selected>All</option>
+                            </select>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="row g-3 mb-4" id="compareSummaryCards">
+        <div class="col-md-3"><div class="card shadow-sm h-100"><div class="card-body text-center"><small class="text-muted">States Compared</small><h4 class="mb-0" id="cmpStates">0</h4></div></div></div>
+        <div class="col-md-3"><div class="card shadow-sm h-100"><div class="card-body text-center"><small class="text-muted">Average Success</small><h4 class="mb-0" id="cmpAvgSuccess">0%</h4></div></div></div>
+        <div class="col-md-3"><div class="card shadow-sm h-100"><div class="card-body text-center"><small class="text-muted">Top State</small><h4 class="mb-0" id="cmpTopState">—</h4></div></div></div>
+        <div class="col-md-3"><div class="card shadow-sm h-100"><div class="card-body text-center"><small class="text-muted">Highest Backlog</small><h4 class="mb-0" id="cmpBacklogState">—</h4></div></div></div>
+    </div>
+
+    <div class="row mb-4">
+        <div class="col-md-6">
+            <input id="compareStateSearch" type="text" class="form-control" placeholder="Search states in comparison table...">
+            <div id="compareStateSuggestions" class="d-flex flex-wrap gap-2 mt-2"></div>
+        </div>
+        <div class="col-md-6 text-md-end mt-2 mt-md-0">
+            <button class="btn btn-outline-primary" id="copyCompareSummaryBtn" type="button">
+                <i class="bi bi-clipboard"></i> Copy Compare Summary
+            </button>
+        </div>
+    </div>
+
+    <div class="row mb-4">
+        <div class="col-12">
+            <div class="card shadow-sm">
+                <div class="card-body">
+                    <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-3">
+                        <h5 class="card-title mb-0">Select States (Multi-Select)</h5>
+                        <div class="d-flex gap-2">
+                            <button class="btn btn-sm btn-outline-secondary" id="selectFilteredStatesBtn" type="button">Select Filtered</button>
+                            <button class="btn btn-sm btn-outline-secondary" id="clearSelectedStatesBtn" type="button">Clear Selected</button>
+                        </div>
+                    </div>
+                    <div id="stateCheckboxGrid" class="row row-cols-1 row-cols-sm-2 row-cols-md-3 row-cols-lg-4 g-2"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Comparison Table -->
+    <div class="row mb-4">
+        <div class="col-12">
+            <div class="card shadow-sm">
+                <div class="card-body">
+                    <h5 class="card-title mb-4">State Performance Metrics</h5>
+                    <div class="table-responsive">
+                        <table class="table table-hover">
+                            <thead class="table-light">
+                                <tr>
+                                    <th>State</th>
+                                    <th class="text-center">Total Issues</th>
+                                    <th class="text-center">Successful</th>
+                                    <th class="text-center">Cancelled</th>
+                                    <th class="text-center">Open</th>
+                                    <th class="text-center">Success Rate</th>
+                                </tr>
+                            </thead>
+                            <tbody id="comparisonTable">
+                                <tr>
+                                    <td colspan="6" class="text-center text-muted">Loading...</td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Chart Section -->
+    <div class="row">
+        <div class="col-lg-6 mb-4">
+            <div class="card shadow-sm">
+                <div class="card-body">
+                    <h5 class="card-title mb-3">Success Rate by State</h5>
+                    <canvas id="successChart"></canvas>
+                </div>
+            </div>
+        </div>
+        <div class="col-lg-6 mb-4">
+            <div class="card shadow-sm">
+                <div class="card-body">
+                    <h5 class="card-title mb-3">Execution Risk Matrix</h5>
+                    <p class="text-muted small mb-3">Success rate vs backlog rate, with bubble size based on issue volume.</p>
+                    <canvas id="distributionChart"></canvas>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+    let successChart = null;
+    let distributionChart = null;
+    let lastCompareRows = [];
+    const allStates = {{ states | map(attribute='name') | list | tojson }};
+    const selectedStates = new Set();
+
+    function getSearchTerm() {
+        return (document.getElementById('compareStateSearch')?.value || '').trim().toLowerCase();
+    }
+
+    function getFilteredStateNames() {
+        const search = getSearchTerm();
+        return allStates.filter(name => !search || name.toLowerCase().includes(search));
+    }
+
+    function renderStateSuggestions() {
+        const container = document.getElementById('compareStateSuggestions');
+        const search = getSearchTerm();
+
+        if (!search) {
+            container.innerHTML = '<span class="text-muted small">Type to see matching states.</span>';
+            return;
+        }
+
+        const matches = getFilteredStateNames().slice(0, 10);
+        if (!matches.length) {
+            container.innerHTML = '<span class="text-muted small">No matching states.</span>';
+            return;
+        }
+
+        container.innerHTML = matches.map(name => `
+            <button type="button" class="btn btn-sm ${selectedStates.has(name) ? 'btn-primary' : 'btn-outline-primary'}" data-suggest-state="${name}">
+                ${selectedStates.has(name) ? 'Selected: ' : ''}${name}
+            </button>
+        `).join('');
+
+        container.querySelectorAll('[data-suggest-state]').forEach(btn => {
+            btn.addEventListener('click', () => {
+                const stateName = btn.dataset.suggestState;
+                if (selectedStates.has(stateName)) {
+                    selectedStates.delete(stateName);
+                } else {
+                    selectedStates.add(stateName);
+                }
+                syncStateSelectors();
+                refreshComparisonViews();
+            });
+        });
+    }
+
+    function renderStateCheckboxes() {
+        const grid = document.getElementById('stateCheckboxGrid');
+        const filtered = getFilteredStateNames();
+
+        if (!filtered.length) {
+            grid.innerHTML = '<div class="col-12"><div class="text-muted small">No states match search.</div></div>';
+            return;
+        }
+
+        grid.innerHTML = filtered.map(name => `
+            <div class="col">
+                <label class="form-check border rounded px-2 py-2 w-100 h-100">
+                    <input class="form-check-input me-2 state-checkbox" type="checkbox" value="${name}" ${selectedStates.has(name) ? 'checked' : ''}>
+                    <span class="form-check-label">${name}</span>
+                </label>
+            </div>
+        `).join('');
+
+        grid.querySelectorAll('.state-checkbox').forEach(input => {
+            input.addEventListener('change', () => {
+                if (input.checked) {
+                    selectedStates.add(input.value);
+                } else {
+                    selectedStates.delete(input.value);
+                }
+                syncStateSelectors();
+                refreshComparisonViews();
+            });
+        });
+    }
+
+    function syncStateSelectors() {
+        renderStateSuggestions();
+        renderStateCheckboxes();
+    }
+
+    function refreshComparisonViews() {
+        updateTable(lastCompareRows);
+        updateCharts(lastCompareRows);
+    }
+
+    function getProcessedComparisonData(data) {
+        const minTotal = parseInt(document.getElementById('minTotalFilter').value || '0', 10);
+        const sortBy = document.getElementById('sortBySelect').value;
+        const topN = parseInt(document.getElementById('topNSelect').value || '50', 10);
+        const search = getSearchTerm();
+
+        let processed = data
+            .map(r => {
+                const total = r.total || 0;
+                const successful = r.successful || 0;
+                const open = r.open || 0;
+                const cancelled = r.cancelled || 0;
+                return {
+                    ...r,
+                    success_rate: total > 0 ? ((successful / total) * 100) : 0,
+                    backlog_rate: total > 0 ? ((open / total) * 100) : 0,
+                    cancel_rate: total > 0 ? ((cancelled / total) * 100) : 0
+                };
+            })
+            .filter(r => (r.total || 0) >= minTotal)
+            .filter(r => !search || (r.state || '').toLowerCase().includes(search))
+            .filter(r => !selectedStates.size || selectedStates.has(r.state))
+            .sort((a, b) => (b[sortBy] || 0) - (a[sortBy] || 0));
+
+        if (topN < 50) processed = processed.slice(0, topN);
+        return processed;
+    }
+
+    function updateSummaryCards(processed) {
+        const count = processed.length;
+        const avgSuccess = count ? (processed.reduce((sum, row) => sum + (row.success_rate || 0), 0) / count) : 0;
+        const topState = count ? processed[0].state : '—';
+        const backlogState = count
+            ? [...processed].sort((a, b) => (b.backlog_rate || 0) - (a.backlog_rate || 0))[0].state
+            : '—';
+
+        document.getElementById('cmpStates').textContent = count;
+        document.getElementById('cmpAvgSuccess').textContent = `${avgSuccess.toFixed(1)}%`;
+        document.getElementById('cmpTopState').textContent = topState;
+        document.getElementById('cmpBacklogState').textContent = backlogState;
+    }
+
+    function loadComparisonData() {
+        const tagId = document.getElementById('tagSelect').value;
+        const url = '/api/compare' + (tagId ? `?tag_id=${tagId}` : '');
+
+        fetch(url)
+            .then(response => response.json())
+            .then(data => {
+                lastCompareRows = data;
+                refreshComparisonViews();
+            })
+            .catch(error => console.error('Error:', error));
+    }
+
+    function updateTable(data) {
+        const tbody = document.getElementById('comparisonTable');
+        tbody.innerHTML = '';
+
+        const processed = getProcessedComparisonData(data);
+        updateSummaryCards(processed);
+
+        if (!processed.length) {
+            tbody.innerHTML = '<tr><td colspan="6" class="text-center text-muted">No states match the current filters.</td></tr>';
+            return;
+        }
+
+        processed.forEach(row => {
+            const total = row.total || 0;
+            const successful = row.successful || 0;
+            const successRate = (row.success_rate || 0).toFixed(1);
+
+            const tr = document.createElement('tr');
+            tr.innerHTML = `
+                <td>
+                    <strong>${row.state}</strong>
+                </td>
+                <td class="text-center">
+                    <span class="badge bg-secondary">${total}</span>
+                </td>
+                <td class="text-center">
+                    <span class="badge bg-success">${successful}</span>
+                </td>
+                <td class="text-center">
+                    <span class="badge bg-danger">${row.cancelled || 0}</span>
+                </td>
+                <td class="text-center">
+                    <span class="badge bg-warning">${row.open || 0}</span>
+                </td>
+                <td class="text-center">
+                    <div class="progress" style="height: 24px;">
+                        <div class="progress-bar bg-success" style="width: ${successRate}%">
+                            ${successRate}%
+                        </div>
+                    </div>
+                </td>
+            `;
+            tbody.appendChild(tr);
+        });
+    }
+
+    function updateCharts(data) {
+        const processed = getProcessedComparisonData(data);
+
+        const states = processed.map(d => d.state);
+        const successRates = processed.map(d => d.success_rate.toFixed(1));
+        const scatterPoints = processed.map(d => ({
+            x: d.backlog_rate || 0,
+            y: d.success_rate || 0,
+            r: Math.max(6, Math.min(20, (d.total || 0) * 0.8)),
+            state: d.state,
+            total: d.total || 0,
+            cancelled: d.cancel_rate || 0
+        }));
+
+        // Success Rate Chart
+        if (successChart) {
+            successChart.destroy();
+        }
+        const successCtx = document.getElementById('successChart').getContext('2d');
+        successChart = new Chart(successCtx, {
+            type: 'bar',
+            data: {
+                labels: states,
+                datasets: [{
+                    label: 'Success Rate (%)',
+                    data: successRates,
+                    backgroundColor: '#198754',
+                    borderColor: '#0d6e3a',
+                    borderWidth: 1
+                }]
+            },
+            options: {
+                responsive: true,
+                plugins: {
+                    legend: {
+                        display: false
+                    }
+                },
+                scales: {
+                    y: {
+                        beginAtZero: true,
+                        max: 100
+                    }
+                }
+            }
+        });
+
+        // Distribution Chart
+        if (distributionChart) {
+            distributionChart.destroy();
+        }
+        const distributionCtx = document.getElementById('distributionChart').getContext('2d');
+        distributionChart = new Chart(distributionCtx, {
+            type: 'bubble',
+            data: {
+                datasets: [
+                    {
+                        label: 'States',
+                        data: scatterPoints,
+                        backgroundColor: 'rgba(13, 110, 253, 0.45)',
+                        borderColor: '#0d6efd',
+                        borderWidth: 1.5
+                    }
+                ]
+            },
+            options: {
+                responsive: true,
+                plugins: {
+                    tooltip: {
+                        callbacks: {
+                            label: function(context) {
+                                const point = context.raw || {};
+                                return `${point.state}: success ${point.y?.toFixed?.(1) ?? point.y}% | backlog ${point.x?.toFixed?.(1) ?? point.x}% | issues ${point.total}`;
+                            }
+                        }
+                    },
+                    legend: {
+                        display: false
+                    }
+                },
+                scales: {
+                    x: {
+                        title: {
+                            display: true,
+                            text: 'Backlog Rate (%)'
+                        },
+                        beginAtZero: true,
+                        max: 100
+                    },
+                    y: {
+                        title: {
+                            display: true,
+                            text: 'Success Rate (%)'
+                        },
+                        beginAtZero: true,
+                        max: 100
+                    }
+                }
+            }
+        });
+    }
+
+    // Event listener
+    document.getElementById('tagSelect').addEventListener('change', loadComparisonData);
+    document.getElementById('minTotalFilter').addEventListener('input', loadComparisonData);
+    document.getElementById('sortBySelect').addEventListener('change', loadComparisonData);
+    document.getElementById('topNSelect').addEventListener('change', loadComparisonData);
+    document.getElementById('compareStateSearch').addEventListener('input', function() {
+        syncStateSelectors();
+        refreshComparisonViews();
+    });
+    document.getElementById('selectFilteredStatesBtn').addEventListener('click', function() {
+        getFilteredStateNames().forEach(name => selectedStates.add(name));
+        syncStateSelectors();
+        refreshComparisonViews();
+    });
+    document.getElementById('clearSelectedStatesBtn').addEventListener('click', function() {
+        selectedStates.clear();
+        syncStateSelectors();
+        refreshComparisonViews();
+    });
+    document.getElementById('copyCompareSummaryBtn').addEventListener('click', async function() {
+        const processed = getProcessedComparisonData(lastCompareRows);
+        if (!processed.length) return;
+        const avgSuccess = (processed.reduce((sum, row) => sum + (row.success_rate || 0), 0) / processed.length).toFixed(1);
+        const topState = processed[0]?.state || 'N/A';
+        const text = `States compared: ${processed.length}\nAverage success: ${avgSuccess}%\nTop state: ${topState}`;
+        try {
+            await navigator.clipboard.writeText(text);
+            if (window.showToast) showToast('Comparison summary copied', 'success');
+        } catch {
+            if (window.showToast) showToast('Unable to copy summary', 'danger');
+        }
+    });
+
+    // Initial load
+    syncStateSelectors();
+    loadComparisonData();
+</script>
+{% endblock %}

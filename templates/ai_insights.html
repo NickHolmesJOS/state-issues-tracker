@@ -1,0 +1,486 @@
+{% extends "base.html" %}
+
+{% block title %}AI Insights - State Issues Tracker{% endblock %}
+
+{% block content %}
+<div class="container-lg py-5">
+    <div class="row mb-4">
+        <div class="col-12">
+            <h1 class="display-5 mb-2">
+                <i class="bi bi-robot"></i> AI-Powered Insights
+            </h1>
+            <p class="text-muted">Smart analysis and recommendations across states</p>
+        </div>
+    </div>
+
+    <!-- Filters Section -->
+    <div class="row mb-5">
+        <div class="col-lg-6">
+            <div class="card shadow-sm filter-card">
+                <div class="card-body">
+                    <h5 class="card-title mb-3">
+                        <i class="bi bi-funnel"></i> Filter Analysis
+                    </h5>
+                    
+                    <div class="mb-3">
+                        <label class="form-label">Issue Type</label>
+                        <select id="issueTypeSelect" class="form-select form-select-lg">
+                            <option value="">All Issue Types</option>
+                            {% for type in issue_types %}
+                            <option value="{{ type }}">{{ type|title }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+
+                    <div class="mb-3">
+                        <label class="form-label">Select States to Compare</label>
+                        <input id="stateSearchInput" type="text" class="form-control mb-2" placeholder="Search states...">
+                        <div class="d-flex gap-2 mb-2">
+                            <button class="btn btn-sm btn-outline-primary" id="selectAllStatesBtn" type="button">Select All</button>
+                            <button class="btn btn-sm btn-outline-secondary" id="clearStatesBtn" type="button">Clear</button>
+                        </div>
+                        <div class="state-checkboxes">
+                            {% for state in states_data %}
+                            <div class="form-check state-option" data-state-name="{{ state['name']|lower }}">
+                                <input class="form-check-input state-checkbox" type="checkbox" 
+                                       value="{{ state['id'] }}" id="state{{ state['id'] }}">
+                                <label class="form-check-label" for="state{{ state['id'] }}">
+                                    {{ state['name'] }}
+                                </label>
+                            </div>
+                            {% endfor %}
+                        </div>
+                    </div>
+
+                    <div class="mb-3">
+                        <label class="form-label">Minimum Sample Size (issues per state)</label>
+                        <input id="minTotalInput" type="number" min="0" max="50" value="3" class="form-control">
+                        <small class="text-muted">Improves reliability by excluding states with too little data.</small>
+                    </div>
+
+                    <div class="mb-3">
+                        <label class="form-label">Saved Scenarios</label>
+                        <div class="d-flex gap-2">
+                            <select id="scenarioSelect" class="form-select">
+                                <option value="">Load saved scenario...</option>
+                            </select>
+                            <button class="btn btn-outline-primary" id="saveScenarioBtn" type="button">Save</button>
+                        </div>
+                    </div>
+
+                    <button class="btn btn-primary btn-lg w-100" id="analyzeBtn">
+                        <i class="bi bi-lightning-charge"></i> Analyze
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <div class="col-lg-6">
+            <div class="card shadow-sm info-card gradient-blue">
+                <div class="card-body text-white">
+                    <h5 class="card-title mb-3">
+                        <i class="bi bi-lightbulb"></i> How It Works
+                    </h5>
+                    <p class="card-text mb-2">
+                        Our AI engine analyzes cross-state initiatives to identify:
+                    </p>
+                    <ul class="mb-0">
+                        <li>Top-performing states by success metrics</li>
+                        <li>Best practices and proven strategies</li>
+                        <li>Areas for improvement and collaboration</li>
+                        <li>Performance gaps and opportunities</li>
+                    </ul>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Insights Display -->
+    <div class="row mb-4" id="summaryCards" style="display:none;">
+        <div class="col-md-3 mb-2">
+            <div class="card shadow-sm h-100"><div class="card-body text-center"><small class="text-muted">States Analyzed</small><h4 id="sumStates" class="mb-0">0</h4></div></div>
+        </div>
+        <div class="col-md-3 mb-2">
+            <div class="card shadow-sm h-100"><div class="card-body text-center"><small class="text-muted">With Data</small><h4 id="sumWithData" class="mb-0">0</h4></div></div>
+        </div>
+        <div class="col-md-3 mb-2">
+            <div class="card shadow-sm h-100"><div class="card-body text-center"><small class="text-muted">Avg Success</small><h4 id="sumAvgSuccess" class="mb-0">0%</h4></div></div>
+        </div>
+        <div class="col-md-3 mb-2">
+            <div class="card shadow-sm h-100"><div class="card-body text-center"><small class="text-muted">Avg Confidence</small><h4 id="sumAvgConfidence" class="mb-0">0%</h4></div></div>
+        </div>
+    </div>
+
+    <div class="row">
+        <div class="col-12">
+            <div id="insightsContainer">
+                <div class="text-center py-5 text-muted">
+                    <i class="bi bi-search" style="font-size: 3rem; opacity: 0.5;"></i>
+                    <p class="mt-3">Select filters and click "Analyze" to generate AI insights</p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- NLP Chatbot -->
+    <div class="row mt-5">
+        <div class="col-12">
+            <div class="card shadow-sm">
+                <div class="card-body">
+                    <h5 class="card-title mb-3">
+                        <i class="bi bi-chat-dots"></i> Ask the Issue Analyst (NLP)
+                    </h5>
+                    <p class="text-muted small mb-3">Examples: "best states for environment", "open issues in texas", "compare healthcare"</p>
+                    <div class="input-group mb-3">
+                        <input id="chatQuestion" type="text" class="form-control" placeholder="Ask a question about the issues data...">
+                        <button id="askBtn" class="btn btn-dark" type="button">
+                            <i class="bi bi-send"></i> Ask
+                        </button>
+                    </div>
+                    <div id="chatAnswer" class="alert alert-light mb-0" style="display:none;"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Comparison Table -->
+    <div class="row mt-5" id="tableSection" style="display: none;">
+        <div class="col-12">
+            <div class="card shadow-sm">
+                <div class="card-body">
+                    <h5 class="card-title mb-4">Detailed Comparison</h5>
+                    <div class="table-responsive">
+                        <table class="table table-hover" id="comparisonTable">
+                            <thead class="table-light">
+                                <tr>
+                                    <th>State</th>
+                                    <th class="text-center">Total</th>
+                                    <th class="text-center">Successful</th>
+                                    <th class="text-center">Cancelled</th>
+                                    <th class="text-center">Open</th>
+                                    <th class="text-center">Success Rate</th>
+                                    <th class="text-center">Quality Score</th>
+                                    <th class="text-center">Confidence</th>
+                                </tr>
+                            </thead>
+                            <tbody id="tableBody">
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<style>
+    .filter-card {
+        border: 2px solid #e9ecef;
+        transition: all 0.3s ease;
+    }
+
+    .filter-card:hover {
+        border-color: #0d6efd;
+        box-shadow: 0 4px 20px rgba(13, 110, 253, 0.15) !important;
+    }
+
+    .state-checkboxes {
+        max-height: 300px;
+        overflow-y: auto;
+        padding: 10px;
+        border: 1px solid #e9ecef;
+        border-radius: 8px;
+        margin-bottom: 15px;
+    }
+
+    .form-check {
+        padding: 8px 0;
+    }
+
+    .form-check-input {
+        width: 20px;
+        height: 20px;
+        cursor: pointer;
+    }
+
+    .form-check-label {
+        cursor: pointer;
+        margin-left: 8px;
+        font-weight: 500;
+    }
+
+    .gradient-blue {
+        background: linear-gradient(135deg, #0d6efd 0%, #0dcaf0 100%);
+        border: none;
+    }
+
+    .gradient-green {
+        background: linear-gradient(135deg, #198754 0%, #20c997 100%);
+        border: none;
+    }
+
+    .gradient-orange {
+        background: linear-gradient(135deg, #fd7e14 0%, #ffc107 100%);
+        border: none;
+    }
+
+    .gradient-red {
+        background: linear-gradient(135deg, #dc3545 0%, #ff6b6b 100%);
+        border: none;
+    }
+
+    .insight-card {
+        border-left: 5px solid;
+        background: white;
+        margin-bottom: 15px;
+        transition: all 0.3s ease;
+    }
+
+    .insight-card:hover {
+        transform: translateX(5px);
+        box-shadow: 0 4px 15px rgba(0, 0, 0, 0.1);
+    }
+
+    .insight-card.best_performer {
+        border-left-color: #198754;
+    }
+
+    .insight-card.improvement_opportunity {
+        border-left-color: #ffc107;
+    }
+
+    .insight-card.strategic_insight {
+        border-left-color: #0d6efd;
+    }
+
+    .insight-icon {
+        font-size: 2rem;
+        margin-bottom: 10px;
+    }
+
+    .form-select-lg {
+        padding: 0.75rem 1rem;
+        font-size: 1rem;
+    }
+</style>
+
+<script>
+    document.getElementById('analyzeBtn').addEventListener('click', function() {
+        const btn = this;
+        btn.disabled = true;
+        btn.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span>Analyzing...';
+
+        const issueType = document.getElementById('issueTypeSelect').value;
+        const minTotal = document.getElementById('minTotalInput').value || '3';
+        const selectedStates = Array.from(document.querySelectorAll('.state-checkbox:checked'))
+            .map(cb => cb.value)
+            .join(',');
+
+        let url = '/api/ai-comparison?';
+        if (issueType) url += `issue_type=${issueType}&`;
+        if (selectedStates) url += `states=${selectedStates}`;
+        url += `${selectedStates ? '&' : ''}min_total=${encodeURIComponent(minTotal)}`;
+
+        fetch(url)
+            .then(response => response.json())
+            .then(data => {
+                displayInsights(data.insights);
+                displayComparison(data.data);
+                displaySummary(data.meta);
+                document.getElementById('summaryCards').style.display = 'flex';
+            })
+            .catch(() => {
+                document.getElementById('insightsContainer').innerHTML = '<div class="alert alert-danger">Analysis failed. Please try again.</div>';
+            })
+            .finally(() => {
+                btn.disabled = false;
+                btn.innerHTML = '<i class="bi bi-lightning-charge"></i> Analyze';
+            });
+    });
+
+    document.getElementById('stateSearchInput').addEventListener('input', function() {
+        const q = this.value.trim().toLowerCase();
+        document.querySelectorAll('.state-option').forEach(option => {
+            const name = option.getAttribute('data-state-name') || '';
+            option.style.display = (!q || name.includes(q)) ? '' : 'none';
+        });
+    });
+
+    document.getElementById('selectAllStatesBtn').addEventListener('click', function() {
+        document.querySelectorAll('.state-option').forEach(opt => {
+            if (opt.style.display !== 'none') {
+                const cb = opt.querySelector('.state-checkbox');
+                if (cb) cb.checked = true;
+            }
+        });
+    });
+
+    document.getElementById('clearStatesBtn').addEventListener('click', function() {
+        document.querySelectorAll('.state-checkbox').forEach(cb => cb.checked = false);
+    });
+
+    function getScenarioPayload() {
+        return {
+            issueType: document.getElementById('issueTypeSelect').value,
+            minTotal: document.getElementById('minTotalInput').value || '3',
+            states: Array.from(document.querySelectorAll('.state-checkbox:checked')).map(cb => cb.value)
+        };
+    }
+
+    function refreshScenarioList() {
+        const select = document.getElementById('scenarioSelect');
+        const scenarios = JSON.parse(localStorage.getItem('aiInsightScenarios') || '[]');
+        select.innerHTML = '<option value="">Load saved scenario...</option>';
+        scenarios.forEach((scenario, idx) => {
+            const opt = document.createElement('option');
+            opt.value = String(idx);
+            opt.textContent = scenario.name;
+            select.appendChild(opt);
+        });
+    }
+
+    document.getElementById('saveScenarioBtn').addEventListener('click', function() {
+        const name = prompt('Scenario name');
+        if (!name) return;
+        const scenarios = JSON.parse(localStorage.getItem('aiInsightScenarios') || '[]');
+        scenarios.push({ name, payload: getScenarioPayload() });
+        localStorage.setItem('aiInsightScenarios', JSON.stringify(scenarios.slice(-20)));
+        refreshScenarioList();
+        if (window.showToast) showToast('Scenario saved', 'success');
+    });
+
+    document.getElementById('scenarioSelect').addEventListener('change', function() {
+        if (!this.value) return;
+        const scenarios = JSON.parse(localStorage.getItem('aiInsightScenarios') || '[]');
+        const picked = scenarios[parseInt(this.value, 10)];
+        if (!picked) return;
+
+        document.getElementById('issueTypeSelect').value = picked.payload.issueType || '';
+        document.getElementById('minTotalInput').value = picked.payload.minTotal || '3';
+        document.querySelectorAll('.state-checkbox').forEach(cb => {
+            cb.checked = (picked.payload.states || []).includes(cb.value);
+        });
+
+        document.getElementById('analyzeBtn').click();
+    });
+
+    function displaySummary(meta) {
+        if (!meta) return;
+        document.getElementById('sumStates').textContent = meta.states_analyzed ?? 0;
+        document.getElementById('sumWithData').textContent = meta.states_with_data ?? 0;
+        document.getElementById('sumAvgSuccess').textContent = `${meta.avg_success_rate ?? 0}%`;
+        document.getElementById('sumAvgConfidence').textContent = `${meta.avg_confidence ?? 0}%`;
+    }
+
+    function displayInsights(insights) {
+        const container = document.getElementById('insightsContainer');
+        
+        if (insights.length === 0) {
+            container.innerHTML = '<div class="alert alert-info">No insights available for this selection.</div>';
+            return;
+        }
+
+        let html = '';
+        insights.forEach(insight => {
+            const iconMap = {
+                'best_performer': '⭐',
+                'improvement_opportunity': '📈',
+                'strategic_insight': '💡'
+            };
+
+            html += `
+                <div class="card insight-card ${insight.type} shadow-sm">
+                    <div class="card-body">
+                        <div class="d-flex align-items-start">
+                            <div class="insight-icon me-3">${iconMap[insight.type]}</div>
+                            <div class="flex-grow-1">
+                                <h5 class="card-title">${insight.title}</h5>
+                                <p class="card-text text-muted">${insight.description}</p>
+                                <div class="alert alert-light mb-0">
+                                    <strong>Recommendation:</strong> ${insight.recommendation}
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            `;
+        });
+
+        container.innerHTML = html;
+    }
+
+    function displayComparison(data) {
+        if (data.length === 0) {
+            document.getElementById('tableSection').style.display = 'none';
+            return;
+        }
+
+        document.getElementById('tableSection').style.display = 'block';
+        const tbody = document.getElementById('tableBody');
+        tbody.innerHTML = '';
+
+        const sorted = [...data].sort((a, b) => (b.composite_score || 0) - (a.composite_score || 0));
+
+        sorted.forEach(row => {
+            const total = row.total || 0;
+            const successful = row.successful || 0;
+            const successRate = (row.success_rate ?? (total > 0 ? ((successful / total) * 100) : 0)).toFixed(1);
+            const quality = (row.composite_score ?? 0).toFixed(1);
+            const confidence = (row.confidence ?? 0).toFixed(1);
+
+            const tr = document.createElement('tr');
+            tr.innerHTML = `
+                <td><strong>${row.state}</strong></td>
+                <td class="text-center"><span class="badge bg-secondary">${total}</span></td>
+                <td class="text-center"><span class="badge bg-success">${successful}</span></td>
+                <td class="text-center"><span class="badge bg-danger">${row.cancelled || 0}</span></td>
+                <td class="text-center"><span class="badge bg-warning">${row.open || 0}</span></td>
+                <td class="text-center">
+                    <div class="progress" style="height: 24px; min-width: 100px;">
+                        <div class="progress-bar bg-success" style="width: ${successRate}%">
+                            ${successRate}%
+                        </div>
+                    </div>
+                </td>
+                <td class="text-center"><span class="badge bg-primary">${quality}</span></td>
+                <td class="text-center"><span class="badge bg-info text-dark">${confidence}%</span></td>
+            `;
+            tbody.appendChild(tr);
+        });
+    }
+
+    document.getElementById('askBtn').addEventListener('click', askQuestion);
+    document.getElementById('chatQuestion').addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') askQuestion();
+    });
+
+    function askQuestion() {
+        const input = document.getElementById('chatQuestion');
+        const question = input.value.trim();
+        if (!question) return;
+
+        fetch('/api/ai-chat', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ question })
+        })
+        .then(r => r.json())
+        .then(data => {
+            const box = document.getElementById('chatAnswer');
+            const details = (data.details || []).map(d => `<li>${d}</li>`).join('');
+            box.innerHTML = `
+                <div><strong>Answer:</strong> ${data.answer || 'No answer available.'}</div>
+                ${details ? `<ul class="mt-2 mb-0">${details}</ul>` : ''}
+            `;
+            box.style.display = 'block';
+        })
+        .catch(() => {
+            const box = document.getElementById('chatAnswer');
+            box.innerHTML = 'Unable to process question right now.';
+            box.style.display = 'block';
+        });
+    }
+
+    refreshScenarioList();
+</script>
+{% endblock %}

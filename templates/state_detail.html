@@ -1,0 +1,251 @@
+{% extends "base.html" %}
+
+{% block title %}{{ state['name'] }} - State Issues Tracker{% endblock %}
+
+{% block content %}
+<div class="container-lg py-5">
+    <div class="row mb-4">
+        <div class="col-12">
+            <a href="/" class="btn btn-outline-secondary btn-sm mb-3">
+                <i class="bi bi-arrow-left"></i> Back to Dashboard
+            </a>
+            <h1 class="display-5 mb-2">
+                <i class="bi bi-geo-alt"></i> {{ state['name'] }}
+            </h1>
+            <p class="text-muted">Total Issues: {{ issues|length }}</p>
+        </div>
+    </div>
+
+    <!-- Filter Buttons -->
+    <div class="row mb-4">
+        <div class="col-12">
+            <div class="btn-group" role="group">
+                <button type="button" class="btn btn-outline-primary filter-btn active" data-filter="all">
+                    All Issues
+                </button>
+                <button type="button" class="btn btn-outline-success filter-btn" data-filter="done">
+                    <i class="bi bi-check-circle"></i> Done
+                </button>
+                <button type="button" class="btn btn-outline-warning filter-btn" data-filter="open">
+                    <i class="bi bi-clock-history"></i> Open
+                </button>
+                <button type="button" class="btn btn-outline-danger filter-btn" data-filter="cancelled">
+                    <i class="bi bi-x-circle"></i> Cancelled
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <div class="row mb-4 g-2">
+        <div class="col-md-7">
+            <input id="issueSearchInput" type="text" class="form-control" placeholder="Search issues by title or description...">
+        </div>
+        <div class="col-md-5">
+            <select id="issueTypeQuickFilter" class="form-select">
+                <option value="all">All Types</option>
+                {% for t in issue_types %}
+                <option value="{{ t|lower }}">{{ t|replace('_', ' ')|title }}</option>
+                {% endfor %}
+            </select>
+        </div>
+    </div>
+
+    <div class="row mb-4">
+        <div class="col-12">
+            <div class="card shadow-sm">
+                <div class="card-body">
+                    <h5 class="card-title mb-3">
+                        <i class="bi bi-plus-circle"></i> Add Custom Issue
+                    </h5>
+                    <form method="POST" action="/state/{{ state['id'] }}/issue/new" class="row g-3">
+                        <div class="col-md-6">
+                            <label class="form-label">Title</label>
+                            <input type="text" name="title" class="form-control" required>
+                        </div>
+                        <div class="col-md-3">
+                            <label class="form-label">Priority</label>
+                            <select name="priority" class="form-select">
+                                <option value="low">Low</option>
+                                <option value="medium" selected>Medium</option>
+                                <option value="high">High</option>
+                            </select>
+                        </div>
+                        <div class="col-md-3">
+                            <label class="form-label">Status</label>
+                            <select name="status" class="form-select">
+                                <option value="open" selected>Open</option>
+                                <option value="done">Done</option>
+                                <option value="cancelled">Cancelled</option>
+                            </select>
+                        </div>
+                        <div class="col-md-6">
+                            <label class="form-label">Issue Type</label>
+                            <input list="issue-types" name="issue_type" class="form-control" placeholder="e.g. housing, environment, transport">
+                            <datalist id="issue-types">
+                                {% for item in issue_types %}
+                                <option value="{{ item }}"></option>
+                                {% endfor %}
+                            </datalist>
+                        </div>
+                        <div class="col-md-6">
+                            <label class="form-label">Description</label>
+                            <input type="text" name="description" class="form-control" placeholder="Short details">
+                        </div>
+                        <div class="col-12">
+                            <button type="submit" class="btn btn-primary">
+                                <i class="bi bi-plus-lg"></i> Save Issue
+                            </button>
+                        </div>
+                    </form>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Issues List -->
+    <div class="row">
+        {% if issues %}
+            {% for issue in issues %}
+            <div class="col-12 mb-3 issue-item" data-status="{{ issue['status'] }}" data-issue-type="{{ (issue['issue_type'] or 'general')|lower }}" data-search-text="{{ ((issue['title'] or '') ~ ' ' ~ (issue['description'] or ''))|lower }}">
+                <div class="card h-100 shadow-sm border-left-{{ issue['status'] }}">
+                    <div class="card-body">
+                        <div class="d-flex justify-content-between align-items-start mb-2">
+                            <div class="flex-grow-1">
+                                <h5 class="card-title mb-1">{{ issue['title'] }}</h5>
+                                <p class="card-text text-muted">{{ issue['description'] }}</p>
+                                <small class="text-muted d-block mb-2">
+                                    <i class="bi bi-diagram-3"></i> Type: {{ issue['issue_type'] or 'general' }}
+                                </small>
+                            </div>
+                            <span class="badge bg-{{ 'success' if issue['status'] == 'done' else 'warning' if issue['status'] == 'open' else 'danger' }} ms-2">
+                                {{ issue['status']|upper }}
+                            </span>
+                        </div>
+
+                        {% if issue['tags'] %}
+                        <div class="mb-3">
+                            {% for tag in issue['tags'].split(', ') %}
+                            <span class="badge bg-light text-dark me-1 mb-1">
+                                <i class="bi bi-tag"></i> {{ tag }}
+                            </span>
+                            {% endfor %}
+                        </div>
+                        {% endif %}
+
+                        <div class="d-flex justify-content-between align-items-center">
+                            <small class="text-muted">
+                                <i class="bi bi-calendar"></i> Created {{ issue['created_at']|slice(0, 10) }}
+                                {% if issue['days_open'] is not none %}
+                                <span class="ms-2 badge bg-{{ 'danger' if issue['days_open'] > 30 else 'warning' if issue['days_open'] > 7 else 'info' }}">
+                                    <i class="bi bi-clock"></i> {{ issue['days_open'] }} day{{ 's' if issue['days_open'] != 1 else '' }} open
+                                </span>
+                                {% endif %}
+                                {% if issue['priority'] %}
+                                <span class="ms-2">
+                                    <i class="bi bi-exclamation-lg"></i> 
+                                    <span class="badge bg-{{ 'danger' if issue['priority'] == 'high' else 'warning' if issue['priority'] == 'medium' else 'info' }}">
+                                        {{ issue['priority']|upper }}
+                                    </span>
+                                </span>
+                                {% endif %}
+                            </small>
+                            <div class="status-buttons">
+                                <select class="form-select form-select-sm status-select" data-issue-id="{{ issue['id'] }}" style="width: auto;">
+                                    <option value="open" {% if issue['status'] == 'open' %}selected{% endif %}>Open</option>
+                                    <option value="done" {% if issue['status'] == 'done' %}selected{% endif %}>Done</option>
+                                    <option value="cancelled" {% if issue['status'] == 'cancelled' %}selected{% endif %}>Cancelled</option>
+                                </select>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            {% endfor %}
+        {% else %}
+        <div class="col-12">
+            <div class="alert alert-info" role="alert">
+                <i class="bi bi-info-circle"></i> No issues found for this state.
+            </div>
+        </div>
+        {% endif %}
+    </div>
+</div>
+
+<style>
+    .border-left-done {
+        border-left: 4px solid #198754;
+    }
+    .border-left-open {
+        border-left: 4px solid #ffc107;
+    }
+    .border-left-cancelled {
+        border-left: 4px solid #dc3545;
+    }
+</style>
+
+<script>
+    let activeStatusFilter = 'all';
+
+    function applyIssueFilters() {
+        const q = (document.getElementById('issueSearchInput')?.value || '').trim().toLowerCase();
+        const type = (document.getElementById('issueTypeQuickFilter')?.value || 'all').toLowerCase();
+
+        document.querySelectorAll('.issue-item').forEach(item => {
+            const status = item.getAttribute('data-status') || '';
+            const itemType = item.getAttribute('data-issue-type') || '';
+            const txt = item.getAttribute('data-search-text') || '';
+
+            const statusOk = activeStatusFilter === 'all' || status === activeStatusFilter;
+            const typeOk = type === 'all' || itemType === type;
+            const searchOk = !q || txt.includes(q);
+
+            item.style.display = (statusOk && typeOk && searchOk) ? 'block' : 'none';
+        });
+    }
+
+    // Filter functionality
+    document.querySelectorAll('.filter-btn').forEach(btn => {
+        btn.addEventListener('click', function() {
+            const filter = this.getAttribute('data-filter') || 'all';
+            activeStatusFilter = filter;
+            document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active'));
+            this.classList.add('active');
+
+            applyIssueFilters();
+        });
+    });
+
+    document.getElementById('issueSearchInput')?.addEventListener('input', applyIssueFilters);
+    document.getElementById('issueTypeQuickFilter')?.addEventListener('change', applyIssueFilters);
+
+    // Status update functionality
+    document.querySelectorAll('.status-select').forEach(select => {
+        select.addEventListener('change', function() {
+            const issueId = this.getAttribute('data-issue-id');
+            const newStatus = this.value;
+            const card = this.closest('.issue-item');
+            const badge = card && card.querySelector('.badge');
+
+            fetch(`/api/issue/${issueId}/update`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ status: newStatus })
+            })
+            .then(r => r.json())
+            .then(data => {
+                if (data.success) {
+                    if (card) card.setAttribute('data-status', newStatus);
+                    if (badge) {
+                        badge.className = `badge ms-2 bg-${ newStatus === 'done' ? 'success' : newStatus === 'open' ? 'warning' : 'danger' }`;
+                        badge.textContent = newStatus.toUpperCase();
+                    }
+                    const statusLabels = { done: 'Marked as Done ✓', open: 'Reopened', cancelled: 'Cancelled' };
+                    const toastColors = { done: 'success', open: 'info', cancelled: 'danger' };
+                    if (window.showToast) showToast(statusLabels[newStatus] || 'Status updated', toastColors[newStatus] || 'success');
+                }
+            })
+            .catch(() => { if (window.showToast) showToast('Update failed', 'danger'); });
+        });
+    });
+</script>
+{% endblock %}

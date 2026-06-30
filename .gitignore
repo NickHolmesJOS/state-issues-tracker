@@ -1,0 +1,33 @@
+# State Issues Tracker
+
+# Python environment
+venv/
+.venv/
+*.pyc
+__pycache__/
+*.egg-info/
+dist/
+build/
+
+# Database
+*.db
+*.sqlite
+*.sqlite3
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Environment
+.env
+.env.local
+
+# Logs
+*.log

@@ -1,0 +1,250 @@
+{% extends "base.html" %}
+
+{% block title %}US Heatmap - State Issues Tracker{% endblock %}
+
+{% block content %}
+<div class="container-lg py-5">
+    <div class="row mb-4">
+        <div class="col-12">
+            <h1 class="display-5 mb-2">
+                <i class="bi bi-map"></i> US Issues Heatmap
+            </h1>
+            <p class="text-muted">Filter by status, tags, and issue types. Click any state to inspect all issues.</p>
+        </div>
+    </div>
+
+    <div class="row g-4 mb-4">
+        <div class="col-md-3">
+            <label class="form-label">Metric</label>
+            <select id="metricSelect" class="form-select">
+                <option value="quality_score" selected>Quality Score</option>
+                <option value="success_rate">Success Rate %</option>
+                <option value="total">Total Issues</option>
+                <option value="successful">Completed</option>
+                <option value="open">Open</option>
+                <option value="cancelled">Cancelled</option>
+                <option value="backlog_rate">Backlog Rate %</option>
+                <option value="cancel_rate">Cancel Rate %</option>
+            </select>
+        </div>
+        <div class="col-md-3">
+            <label class="form-label">Status</label>
+            <select id="statusSelect" class="form-select">
+                <option value="">All Statuses</option>
+                <option value="open">Open</option>
+                <option value="done">Done</option>
+                <option value="cancelled">Cancelled</option>
+            </select>
+        </div>
+        <div class="col-md-3">
+            <label class="form-label">Issue Type</label>
+            <select id="issueTypeSelect" class="form-select">
+                <option value="">All Issue Types</option>
+                {% for item in issue_types %}
+                <option value="{{ item }}">{{ item|replace('_', ' ')|title }}</option>
+                {% endfor %}
+            </select>
+        </div>
+        <div class="col-md-3">
+            <label class="form-label">Tag</label>
+            <select id="tagSelect" class="form-select">
+                <option value="0">All Tags</option>
+                {% for tag in tags %}
+                <option value="{{ tag['id'] }}">{{ tag['name']|title }}</option>
+                {% endfor %}
+            </select>
+        </div>
+        <div class="col-12 d-flex gap-2">
+            <button class="btn btn-outline-secondary btn-sm" id="resetHeatmapFilters" type="button"><i class="bi bi-arrow-counterclockwise"></i> Reset Filters</button>
+            <button class="btn btn-outline-primary btn-sm" id="shareHeatmapView" type="button"><i class="bi bi-share"></i> Copy Shareable Link</button>
+        </div>
+    </div>
+
+    <div class="row g-4">
+        <div class="col-lg-8">
+            <div class="card shadow-sm">
+                <div class="card-body">
+                    <div id="usHeatmap" style="height: 620px;"></div>
+                </div>
+            </div>
+        </div>
+        <div class="col-lg-4">
+            <div class="card shadow-sm h-100">
+                <div class="card-body" id="statePanel">
+                    <h5 class="card-title">
+                        <i class="bi bi-geo-alt"></i> State Drilldown
+                    </h5>
+                    <p class="text-muted">Click a state on the map to view its filtered metrics and issues.</p>
+                    <div id="stateSummary"></div>
+                    <hr>
+                    <div id="stateIssues" style="max-height: 430px; overflow-y: auto;"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script src="https://cdn.plot.ly/plotly-2.35.2.min.js"></script>
+<script>
+    const els = {
+        metric: document.getElementById('metricSelect'),
+        status: document.getElementById('statusSelect'),
+        issueType: document.getElementById('issueTypeSelect'),
+        tag: document.getElementById('tagSelect')
+    };
+
+    let lastRows = [];
+
+    function currentQuery() {
+        const params = new URLSearchParams({
+            metric: els.metric.value,
+            status: els.status.value,
+            issue_type: els.issueType.value,
+            tag_id: els.tag.value
+        });
+        return params.toString();
+    }
+
+    function metricLabel(metric) {
+        const labels = {
+            quality_score: 'Quality Score',
+            success_rate: 'Success Rate %',
+            total: 'Total Issues',
+            successful: 'Completed',
+            open: 'Open',
+            cancelled: 'Cancelled',
+            backlog_rate: 'Backlog Rate %',
+            cancel_rate: 'Cancel Rate %'
+        };
+        return labels[metric] || metric;
+    }
+
+    function renderMap(rows, metric) {
+        lastRows = rows;
+        const locations = rows.map(r => r.state_code);
+        const z = rows.map(r => r.metric_value || 0);
+        const hovertext = rows.map(r => r.name || r.state || 'Unknown');
+        const customdata = rows.map(r => [r.id, r.name || r.state, r.total, r.success_rate, r.quality_score]);
+
+        const data = [{
+            type: 'choropleth',
+            locationmode: 'USA-states',
+            locations,
+            z,
+            hovertext,
+            customdata,
+            colorscale: 'YlGnBu',
+            colorbar: { title: metricLabel(metric) },
+            marker: { line: { color: '#fff', width: 1 } },
+            hovertemplate: '<b>%{hovertext}</b><br>' +
+                           `${metricLabel(metric)}: %{z}<br>` +
+                           'Total: %{customdata[2]}<br>' +
+                           'Success Rate: %{customdata[3]}%<extra></extra>'
+        }];
+
+        const layout = {
+            geo: { scope: 'usa', bgcolor: 'rgba(0,0,0,0)' },
+            margin: { l: 0, r: 0, t: 0, b: 0 },
+            paper_bgcolor: 'rgba(0,0,0,0)'
+        };
+
+        Plotly.newPlot('usHeatmap', data, layout, {responsive: true, displayModeBar: false});
+
+        const mapEl = document.getElementById('usHeatmap');
+        mapEl.on('plotly_click', function(event) {
+            const point = event.points && event.points[0];
+            if (!point || !point.customdata) return;
+            const stateId = point.customdata[0];
+            loadStateDetail(stateId);
+        });
+    }
+
+    function renderStateDetail(payload) {
+        const state = payload.state;
+        const s = payload.summary;
+        const issues = payload.issues || [];
+
+        document.getElementById('stateSummary').innerHTML = `
+            <div class="mb-3">
+                <h6 class="mb-2">${state.name} (${state.code})</h6>
+                <div class="row text-center g-2">
+                    <div class="col-6"><div class="p-2 bg-light rounded"><strong>${s.total}</strong><br><small>Total</small></div></div>
+                    <div class="col-6"><div class="p-2 bg-light rounded"><strong>${s.success_rate}%</strong><br><small>Success</small></div></div>
+                    <div class="col-4"><div class="p-2 bg-light rounded"><strong>${s.successful}</strong><br><small>Done</small></div></div>
+                    <div class="col-4"><div class="p-2 bg-light rounded"><strong>${s.open}</strong><br><small>Open</small></div></div>
+                    <div class="col-4"><div class="p-2 bg-light rounded"><strong>${s.cancelled}</strong><br><small>Cancelled</small></div></div>
+                </div>
+                <a href="/state/${state.id}" class="btn btn-sm btn-outline-primary mt-3">Open Full State Page</a>
+            </div>
+        `;
+
+        if (!issues.length) {
+            document.getElementById('stateIssues').innerHTML = '<div class="text-muted">No issues found for current filters.</div>';
+            return;
+        }
+
+        let html = '';
+        issues.forEach(issue => {
+            const badge = issue.status === 'done' ? 'success' : issue.status === 'open' ? 'warning' : 'danger';
+            html += `
+                <div class="border rounded p-2 mb-2 bg-white">
+                    <div class="d-flex justify-content-between align-items-start mb-1">
+                        <strong>${issue.title}</strong>
+                        <span class="badge bg-${badge}">${issue.status}</span>
+                    </div>
+                    <div class="small text-muted mb-1">${issue.issue_type || 'general'} • ${issue.priority || 'medium'}</div>
+                    <div class="small">${issue.description || ''}</div>
+                    ${issue.tags ? `<div class="small text-muted mt-1">Tags: ${issue.tags}</div>` : ''}
+                </div>
+            `;
+        });
+
+        document.getElementById('stateIssues').innerHTML = html;
+    }
+
+    function loadStateDetail(stateId) {
+        fetch(`/api/heatmap-state/${stateId}?${currentQuery()}`)
+            .then(r => r.json())
+            .then(renderStateDetail)
+            .catch(() => {
+                document.getElementById('stateIssues').innerHTML = '<div class="text-danger">Unable to load state details.</div>';
+            });
+    }
+
+    function loadHeatmap() {
+        fetch(`/api/heatmap-data?${currentQuery()}`)
+            .then(r => r.json())
+            .then(payload => {
+                renderMap(payload.rows || [], payload.metric);
+                document.getElementById('stateSummary').innerHTML = '';
+                document.getElementById('stateIssues').innerHTML = '<div class="text-muted">Click a state on the map.</div>';
+            })
+            .catch(() => {
+                document.getElementById('usHeatmap').innerHTML = '<div class="text-danger">Unable to load heatmap data.</div>';
+            });
+    }
+
+    [els.metric, els.status, els.issueType, els.tag].forEach(el => el.addEventListener('change', loadHeatmap));
+
+    document.getElementById('resetHeatmapFilters').addEventListener('click', function() {
+        els.metric.value = 'quality_score';
+        els.status.value = '';
+        els.issueType.value = '';
+        els.tag.value = '0';
+        loadHeatmap();
+        if (window.showToast) showToast('Heatmap filters reset', 'info');
+    });
+
+    document.getElementById('shareHeatmapView').addEventListener('click', async function() {
+        const url = `${window.location.origin}/heatmap?${currentQuery()}`;
+        try {
+            await navigator.clipboard.writeText(url);
+            if (window.showToast) showToast('Share link copied', 'success');
+        } catch {
+            if (window.showToast) showToast('Unable to copy link', 'danger');
+        }
+    });
+
+    loadHeatmap();
+</script>
+{% endblock %}

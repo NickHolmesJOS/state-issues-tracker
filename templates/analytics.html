@@ -1,0 +1,269 @@
+{% extends "base.html" %}
+
+{% block title %}Analytics - State Issues Tracker{% endblock %}
+
+{% block content %}
+<div class="container-lg py-5">
+    <div class="row mb-4">
+        <div class="col-12">
+            <h1 class="display-5 mb-2">
+                <i class="bi bi-graph-up"></i> Analytics & Insights
+            </h1>
+            <p class="text-muted">System-wide statistics and trends</p>
+        </div>
+    </div>
+
+    <!-- Key Metrics -->
+    <div class="row mb-5">
+        <div class="col-md-3 mb-3">
+            <div class="card stat-card h-100">
+                <div class="card-body">
+                    <div class="d-flex justify-content-between align-items-start">
+                        <div>
+                            <h6 class="text-muted mb-1">Total Issues</h6>
+                            <h3 class="mb-0">{{ stats.total_issues }}</h3>
+                        </div>
+                        <i class="bi bi-list-check text-primary" style="font-size: 2rem;"></i>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="col-md-3 mb-3">
+            <div class="card stat-card h-100 border-success">
+                <div class="card-body">
+                    <div class="d-flex justify-content-between align-items-start">
+                        <div>
+                            <h6 class="text-muted mb-1">Completed</h6>
+                            <h3 class="mb-0 text-success">{{ stats.done }}</h3>
+                            <small class="text-muted">
+                                {% if stats.total_issues > 0 %}
+                                    {{ (stats.done / stats.total_issues * 100)|int }}% success rate
+                                {% endif %}
+                            </small>
+                        </div>
+                        <i class="bi bi-check-circle-fill text-success" style="font-size: 2rem;"></i>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="col-md-3 mb-3">
+            <div class="card stat-card h-100 border-warning">
+                <div class="card-body">
+                    <div class="d-flex justify-content-between align-items-start">
+                        <div>
+                            <h6 class="text-muted mb-1">Open</h6>
+                            <h3 class="mb-0 text-warning">{{ stats.open }}</h3>
+                            <small class="text-muted">
+                                {% if stats.total_issues > 0 %}
+                                    {{ (stats.open / stats.total_issues * 100)|int }}% in progress
+                                {% endif %}
+                            </small>
+                        </div>
+                        <i class="bi bi-clock-history text-warning" style="font-size: 2rem;"></i>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="col-md-3 mb-3">
+            <div class="card stat-card h-100 border-danger">
+                <div class="card-body">
+                    <div class="d-flex justify-content-between align-items-start">
+                        <div>
+                            <h6 class="text-muted mb-1">Cancelled</h6>
+                            <h3 class="mb-0 text-danger">{{ stats.cancelled }}</h3>
+                            <small class="text-muted">
+                                {% if stats.total_issues > 0 %}
+                                    {{ (stats.cancelled / stats.total_issues * 100)|int }}% cancelled
+                                {% endif %}
+                            </small>
+                        </div>
+                        <i class="bi bi-x-circle-fill text-danger" style="font-size: 2rem;"></i>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="row mb-4">
+        <div class="col-12">
+            <div class="card shadow-sm">
+                <div class="card-body">
+                    <h5 class="card-title mb-3"><i class="bi bi-cpu"></i> Auto Insights</h5>
+                    <div id="analyticsAutoInsights" class="small text-muted">Generating recommendations...</div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Issue Type Chart (NEW) -->
+    <div class="row mb-5">
+        <div class="col-12">
+            <div class="card shadow-sm">
+                <div class="card-body">
+                    <div class="d-flex justify-content-between align-items-center mb-3">
+                        <h5 class="card-title mb-0"><i class="bi bi-layers-fill text-primary me-2"></i>Issue Volume by Type</h5>
+                        <a href="/api/export/issues.csv" class="btn btn-sm btn-outline-success">
+                            <i class="bi bi-download"></i> Export All CSV
+                        </a>
+                    </div>
+                    <canvas id="typeChart" style="max-height:360px;"></canvas>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Charts Section -->
+    <div class="row mb-5">
+        <div class="col-lg-6 mb-4">
+            <div class="card shadow-sm">
+                <div class="card-body">
+                    <h5 class="card-title mb-3">Issue Status Distribution</h5>
+                    <canvas id="statusChart"></canvas>
+                </div>
+            </div>
+        </div>
+
+        <div class="col-lg-6 mb-4">
+            <div class="card shadow-sm">
+                <div class="card-body">
+                    <h5 class="card-title mb-3">Status Breakdown</h5>
+                    <canvas id="breakdownChart"></canvas>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Tag Statistics -->
+    <div class="row">
+        <div class="col-12">
+            <div class="card shadow-sm">
+                <div class="card-body">
+                    <h5 class="card-title mb-4">Tag Usage</h5>
+                    <div class="row">
+                        {% for tag in tag_stats %}
+                        <div class="col-md-6 mb-3">
+                            <div class="d-flex justify-content-between align-items-center">
+                                <div>
+                                    <h6 class="mb-1">
+                                        <i class="bi bi-tag"></i> {{ tag['name']|title }}
+                                    </h6>
+                                    <small class="text-muted">{{ tag['count'] }} issues</small>
+                                </div>
+                                <span class="badge bg-primary">{{ tag['count'] }}</span>
+                            </div>
+                            <div class="progress mt-2" style="height: 6px;">
+                                {% set max_count = tag_stats[0]['count'] %}
+                                <div class="progress-bar" style="width: {{ (tag['count'] / max_count * 100)|int }}%"></div>
+                            </div>
+                        </div>
+                        {% endfor %}
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+    (function() {
+        const total = {{ stats.total_issues or 0 }};
+        const done = {{ stats.done or 0 }};
+        const open = {{ stats.open or 0 }};
+        const cancelled = {{ stats.cancelled or 0 }};
+        const successRate = total > 0 ? (done / total) * 100 : 0;
+        const backlogRate = total > 0 ? (open / total) * 100 : 0;
+        const cancelRate = total > 0 ? (cancelled / total) * 100 : 0;
+
+        const notes = [];
+        if (successRate < 35) notes.push('Success rate is below target. Consider tighter triage and milestone tracking.');
+        else notes.push('Success rate is healthy. Focus on consistency across issue types.');
+
+        if (backlogRate > 50) notes.push('Backlog is elevated. Add short-cycle closure goals for open issues.');
+        if (cancelRate > 15) notes.push('Cancellation rate is high. Introduce early risk checks before execution.');
+
+        const topType = ({{ issue_type_stats | tojson }} || [])[0];
+        if (topType) notes.push(`Highest volume category: ${String(topType.issue_type || '').replace(/_/g, ' ')}.`);
+
+        document.getElementById('analyticsAutoInsights').innerHTML = '<ul class="mb-0">' + notes.map(n => `<li>${n}</li>`).join('') + '</ul>';
+    })();
+
+    // Issue Type Breakdown Chart
+    const typeLabels = {{ issue_type_stats | map(attribute='issue_type') | list | tojson }};
+    const typeDone  = {{ issue_type_stats | map(attribute='done')       | list | tojson }};
+    const typeOpen  = {{ issue_type_stats | map(attribute='open')       | list | tojson }};
+    const typeCancl = {{ issue_type_stats | map(attribute='cancelled')  | list | tojson }};
+
+    new Chart(document.getElementById('typeChart').getContext('2d'), {
+        type: 'bar',
+        data: {
+            labels: typeLabels.map(l => l.replace(/_/g,' ')),
+            datasets: [
+                { label:'Completed', data: typeDone,  backgroundColor:'#198754' },
+                { label:'Open',      data: typeOpen,  backgroundColor:'#ffc107' },
+                { label:'Cancelled', data: typeCancl, backgroundColor:'#dc3545' }
+            ]
+        },
+        options: { responsive: true, indexAxis: 'y',
+            scales: { x: { stacked: true }, y: { stacked: true } },
+            plugins: { legend: { position: 'top' } } }
+    });
+
+    // Status Chart (Pie)
+    const statusCtx = document.getElementById('statusChart').getContext('2d');
+    new Chart(statusCtx, {
+        type: 'doughnut',
+        data: {
+            labels: ['Completed', 'Open', 'Cancelled'],
+            datasets: [{
+                data: [{{ stats.done }}, {{ stats.open }}, {{ stats.cancelled }}],
+                backgroundColor: ['#198754', '#ffc107', '#dc3545'],
+                borderColor: '#fff',
+                borderWidth: 2
+            }]
+        },
+        options: {
+            responsive: true,
+            plugins: {
+                legend: {
+                    position: 'bottom'
+                }
+            }
+        }
+    });
+
+    // Breakdown Chart (Bar)
+    const breakdownCtx = document.getElementById('breakdownChart').getContext('2d');
+    new Chart(breakdownCtx, {
+        type: 'bar',
+        data: {
+            labels: ['Completed', 'Open', 'Cancelled'],
+            datasets: [{
+                label: 'Number of Issues',
+                data: [{{ stats.done }}, {{ stats.open }}, {{ stats.cancelled }}],
+                backgroundColor: ['#198754', '#ffc107', '#dc3545'],
+                borderRadius: 4
+            }]
+        },
+        options: {
+            responsive: true,
+            indexAxis: 'y',
+            plugins: {
+                legend: {
+                    display: false
+                }
+            },
+            scales: {
+                x: {
+                    beginAtZero: true
+                }
+            }
+        }
+    });
+</script>
+{% endblock %}

@@ -1,0 +1,251 @@
+{% extends "base.html" %}
+
+{% block title %}Dashboard - State Issues Tracker{% endblock %}
+
+{% block content %}
+<div class="container-lg py-5">
+    <div class="row mb-4">
+        <div class="col-12">
+            <h1 class="display-5 mb-2">
+                <i class="bi bi-speedometer2"></i> Dashboard
+            </h1>
+            <p class="text-muted">Overview of issues across all states</p>
+        </div>
+    </div>
+
+    <!-- Summary Cards -->
+    <div class="row mb-5">
+        {% set ns = namespace(total_all=0, done_all=0, open_all=0) %}
+        {% for state in states %}
+            {% set ns.total_all = ns.total_all + (state['total_issues'] or 0) %}
+            {% set ns.done_all = ns.done_all + (state['done_issues'] or 0) %}
+            {% set ns.open_all = ns.open_all + (state['open_issues'] or 0) %}
+        {% endfor %}
+
+        <div class="col-md-3 mb-3">
+            <div class="card stat-card h-100">
+                <div class="card-body">
+                    <div class="d-flex justify-content-between align-items-start">
+                        <div>
+                            <h6 class="text-muted mb-1">Total Issues</h6>
+                            <h3 class="mb-0">{{ ns.total_all }}</h3>
+                        </div>
+                        <i class="bi bi-list-check text-primary" style="font-size: 2rem;"></i>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="col-md-3 mb-3">
+            <div class="card stat-card h-100 border-success">
+                <div class="card-body">
+                    <div class="d-flex justify-content-between align-items-start">
+                        <div>
+                            <h6 class="text-muted mb-1">Completed</h6>
+                            <h3 class="mb-0 text-success">{{ ns.done_all }}</h3>
+                        </div>
+                        <i class="bi bi-check-circle-fill text-success" style="font-size: 2rem;"></i>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="col-md-3 mb-3">
+            <div class="card stat-card h-100 border-warning">
+                <div class="card-body">
+                    <div class="d-flex justify-content-between align-items-start">
+                        <div>
+                            <h6 class="text-muted mb-1">Open</h6>
+                            <h3 class="mb-0 text-warning">{{ ns.open_all }}</h3>
+                        </div>
+                        <i class="bi bi-clock-history text-warning" style="font-size: 2rem;"></i>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="col-md-3 mb-3">
+            <div class="card stat-card h-100 border-danger">
+                <div class="card-body">
+                    <div class="d-flex justify-content-between align-items-start">
+                        <div>
+                            <h6 class="text-muted mb-1">States</h6>
+                            <h3 class="mb-0 text-danger">{{ states|length }}</h3>
+                        </div>
+                        <i class="bi bi-map text-danger" style="font-size: 2rem;"></i>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Leaderboard + Overview Chart -->
+    <div class="row mb-5">
+        <div class="col-lg-7 mb-4">
+            <div class="card shadow-sm h-100">
+                <div class="card-body">
+                    <div class="d-flex justify-content-between align-items-center mb-3">
+                        <h5 class="card-title mb-0"><i class="bi bi-trophy-fill text-warning me-2"></i>Top 10 States — Quality Leaderboard</h5>
+                        <a href="/api/export/issues.csv" class="btn btn-sm btn-outline-success">
+                            <i class="bi bi-download"></i> Export CSV
+                        </a>
+                    </div>
+                    <div class="table-responsive">
+                        <table class="table table-hover mb-0">
+                            <thead>
+                                <tr>
+                                    <th style="width:44px;">Rank</th>
+                                    <th>State</th>
+                                    <th class="text-center">Score</th>
+                                    <th class="text-center">Success</th>
+                                    <th class="text-center">Issues</th>
+                                    <th></th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% set medals = ['🥇','🥈','🥉'] %}
+                                {% for state in leaderboard %}
+                                <tr>
+                                    <td class="text-center fw-bold">
+                                        {% if loop.index <= 3 %}{{ medals[loop.index-1] }}
+                                        {% else %}{{ loop.index }}{% endif %}
+                                    </td>
+                                    <td><strong>{{ state['state'] }}</strong></td>
+                                    <td class="text-center"><span class="badge bg-primary">{{ state['composite_score'] }}</span></td>
+                                    <td class="text-center">
+                                        <div class="progress" style="height:16px;min-width:60px;">
+                                            <div class="progress-bar bg-success" style="width:{{ state['success_rate'] }}%">{{ state['success_rate'] }}%</div>
+                                        </div>
+                                    </td>
+                                    <td class="text-center"><span class="badge bg-secondary">{{ state['total'] }}</span></td>
+                                    <td><a href="/state/{{ state['id'] }}" class="btn btn-xs btn-outline-primary" style="padding:2px 8px;font-size:0.75rem;">View</a></td>
+                                </tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <div class="col-lg-5 mb-4">
+            <div class="card shadow-sm h-100">
+                <div class="card-body d-flex flex-column">
+                    <h5 class="card-title mb-3"><i class="bi bi-pie-chart-fill text-primary me-2"></i>Issue Status Overview</h5>
+                    <canvas id="dashboardDonut" style="max-height:260px;"></canvas>
+                    <button class="btn btn-outline-primary mt-3" id="stateSpotlightBtn" type="button">
+                        <i class="bi bi-lightning-charge"></i> State Spotlight
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- States Grid -->
+    <div class="row">
+        <div class="col-12 mb-3">
+            <div class="d-flex justify-content-between align-items-center flex-wrap gap-2">
+                <h3 class="mb-0">State Overview</h3>
+                <div style="max-width: 360px; width: 100%;">
+                    <input id="dashboardStateSearch" type="text" class="form-control" placeholder="Search states in overview...">
+                </div>
+            </div>
+        </div>
+        <div class="col-12 mb-4" id="stateSearchEmpty" style="display:none;">
+            <div class="alert alert-info mb-0">No states match your search.</div>
+        </div>
+        {% for state in states %}
+        <div class="col-lg-6 mb-4 state-overview-item" data-state-name="{{ state['name']|lower }}">
+            <div class="card state-card h-100 shadow-sm">
+                <div class="card-body">
+                    <div class="d-flex justify-content-between align-items-start mb-3">
+                        <div>
+                            <h5 class="card-title mb-1">
+                                <i class="bi bi-geo-alt"></i> {{ state['name'] }}
+                            </h5>
+                            <small class="text-muted">{{ state['total_issues'] or 0 }} total issues</small>
+                        </div>
+                        <a href="/state/{{ state['id'] }}" class="btn btn-sm btn-outline-primary">
+                            <i class="bi bi-arrow-right"></i> View
+                        </a>
+                    </div>
+
+                    <div class="progress mb-2" style="height: 6px;">
+                        {% set total = state['total_issues'] or 1 %}
+                        {% set done_pct = ((state['done_issues'] or 0) / total * 100)|int %}
+                        {% set open_pct = ((state['open_issues'] or 0) / total * 100)|int %}
+                        <div class="progress-bar bg-success" style="width: {{ done_pct }}%"></div>
+                        <div class="progress-bar bg-warning" style="width: {{ open_pct }}%"></div>
+                    </div>
+
+                    <div class="row text-center small">
+                        <div class="col-4">
+                            <div class="text-success fw-bold">{{ state['done_issues'] or 0 }}</div>
+                            <div class="text-muted">Done</div>
+                        </div>
+                        <div class="col-4">
+                            <div class="text-warning fw-bold">{{ state['open_issues'] or 0 }}</div>
+                            <div class="text-muted">Open</div>
+                        </div>
+                        <div class="col-4">
+                            <div class="text-danger fw-bold">{{ state['cancelled_issues'] or 0 }}</div>
+                            <div class="text-muted">Cancelled</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        {% endfor %}
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+new Chart(document.getElementById('dashboardDonut'), {
+    type: 'doughnut',
+    data: {
+        labels: ['Completed', 'Open', 'Cancelled'],
+        datasets: [{ data: [{{ done_issues }}, {{ open_issues }}, {{ total_issues - done_issues - open_issues }}],
+            backgroundColor: ['#198754','#ffc107','#dc3545'], borderWidth: 3, borderColor: '#fff' }]
+    },
+    options: { responsive: true, cutout: '68%',
+        plugins: { legend: { position: 'bottom' },
+            tooltip: { callbacks: { label: ctx => ` ${ctx.label}: ${ctx.parsed} issues` } } } }
+});
+
+const dashboardStateSearch = document.getElementById('dashboardStateSearch');
+const stateItems = Array.from(document.querySelectorAll('.state-overview-item'));
+const stateSearchEmpty = document.getElementById('stateSearchEmpty');
+const spotlightBtn = document.getElementById('stateSpotlightBtn');
+
+dashboardStateSearch && dashboardStateSearch.addEventListener('input', function() {
+    const q = this.value.trim().toLowerCase();
+    let visibleCount = 0;
+
+    stateItems.forEach(item => {
+        const name = item.getAttribute('data-state-name') || '';
+        const show = !q || name.includes(q);
+        item.style.display = show ? '' : 'none';
+        if (show) visibleCount += 1;
+    });
+
+    if (stateSearchEmpty) {
+        stateSearchEmpty.style.display = visibleCount === 0 ? '' : 'none';
+    }
+});
+
+spotlightBtn && spotlightBtn.addEventListener('click', function() {
+    const visible = stateItems.filter(x => x.style.display !== 'none');
+    if (!visible.length) return;
+    const pick = visible[Math.floor(Math.random() * visible.length)];
+    pick.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    pick.style.transition = 'box-shadow 0.3s ease';
+    pick.style.boxShadow = '0 0 0 3px rgba(13,110,253,.35), 0 10px 30px rgba(13,110,253,.25)';
+    setTimeout(() => { pick.style.boxShadow = ''; }, 1600);
+    if (window.showToast) {
+        const name = (pick.getAttribute('data-state-name') || '').replace(/\b\w/g, c => c.toUpperCase());
+        showToast(`Spotlight: ${name}`, 'info');
+    }
+});
+</script>
+{% endblock %}
