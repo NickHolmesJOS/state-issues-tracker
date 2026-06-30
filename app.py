@@ -59,7 +59,12 @@ ISSUE_TITLE_TEMPLATES = {
 
 def get_db():
     """Get database connection"""
-    db = sqlite3.connect(app.config['DATABASE'])
+    db_path = app.config['DATABASE']
+    # Ensure the parent directory exists (needed on Render's persistent disk on first deploy)
+    db_dir = os.path.dirname(db_path)
+    if db_dir:
+        os.makedirs(db_dir, exist_ok=True)
+    db = sqlite3.connect(db_path)
     db.row_factory = sqlite3.Row
     return db
 
