@@ -8,11 +8,7 @@ import re
 app = Flask(__name__)
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DEFAULT_DB_PATH = os.path.join(BASE_DIR, 'issues.db')
-RENDER_DB_PATH = '/app/data/issues.db'
-app.config['DATABASE'] = os.environ.get(
-    'DATABASE_PATH',
-    RENDER_DB_PATH if os.path.isdir('/app/data') else DEFAULT_DB_PATH
-)
+app.config['DATABASE'] = os.environ.get('DATABASE_PATH', DEFAULT_DB_PATH)
 
 ALL_STATES = [
     'Alabama', 'Alaska', 'Arizona', 'Arkansas', 'California', 'Colorado', 'Connecticut', 'Delaware',
@@ -60,10 +56,14 @@ ISSUE_TITLE_TEMPLATES = {
 def get_db():
     """Get database connection"""
     db_path = app.config['DATABASE']
-    # Ensure the parent directory exists (needed on Render's persistent disk on first deploy)
     db_dir = os.path.dirname(db_path)
     if db_dir:
-        os.makedirs(db_dir, exist_ok=True)
+        try:
+            os.makedirs(db_dir, exist_ok=True)
+        except PermissionError:
+            # Configured path not writable; fall back to a local path next to app.py
+            db_path = os.path.join(BASE_DIR, 'issues.db')
+            app.config['DATABASE'] = db_path
     db = sqlite3.connect(db_path)
     db.row_factory = sqlite3.Row
     return db

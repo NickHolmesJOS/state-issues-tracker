@@ -6,10 +6,10 @@ services:
       - key: PYTHON_VERSION
         value: 3.11.9
       - key: DATABASE_PATH
-        value: /app/data/issues.db
+        value: /var/data/issues.db
     buildCommand: pip install -r requirements.txt
     startCommand: gunicorn app:app --workers 2 --threads 4 --timeout 120
     disk:
       name: database
-      mountPath: /app/data
+      mountPath: /var/data
       sizeGB: 1
