@@ -214,7 +214,6 @@ def init_db():
     db.commit()
 
     # ── CMS Variance Seeding ──────────────────────────────────────────────────
-    # 5 quality tiers derived from DUP_CLAIM_RATES (0=excellent → 4=critical)
     STATE_PROFILES = [
         0, 2, 0, 3, 1, 3, 1, 4, 0, 2,  # AL AK AZ AR CA CO CT DE FL GA
         1, 3, 0, 4, 1, 2, 0, 3, 1, 2,  # HI ID IL IN IA KS KY LA ME MD
@@ -222,15 +221,13 @@ def init_db():
         3, 1, 1, 2, 0, 3, 1, 1, 3, 2,  # NM NY NC ND OH OK OR PA RI SC
         1, 4, 0, 2, 0, 2, 1, 4, 0, 3   # SD TN TX UT VT VA WA WV WI WY
     ]
-    # Target total issues per profile (excellent → critical) before per-state ±40%
     PROFILE_TOTALS = [18, 40, 66, 96, 142]
-    # Status distributions per tier: (open_frac, done_frac, cancelled_frac)
     PROFILE_STATUS_DIST = [
-        (0.10, 0.82, 0.08),  # 0 excellent – mostly done
-        (0.20, 0.70, 0.10),  # 1 good
-        (0.40, 0.45, 0.15),  # 2 average
-        (0.62, 0.26, 0.12),  # 3 poor
-        (0.76, 0.14, 0.10),  # 4 critical – mostly open
+        (0.10, 0.82, 0.08),
+        (0.20, 0.70, 0.10),
+        (0.40, 0.45, 0.15),
+        (0.62, 0.26, 0.12),
+        (0.76, 0.14, 0.10),
     ]
     NON_DUP_TYPES = [t for t in CMS_ISSUE_TYPES if t != 'duplicate_claims']
     from datetime import date as _date, timedelta as _td
@@ -242,7 +239,6 @@ def init_db():
     ]
 
     def _h(a, b=0, c=0):
-        """Deterministic hash 0-99"""
         return (a * 37 + b * 23 + c * 13 + a * b + b * c + 1) % 100
 
     cursor.execute("SELECT COUNT(*) FROM issues WHERE issue_type = 'duplicate_claims'")
@@ -263,70 +259,74 @@ def init_db():
             profile    = STATE_PROFILES[state_idx]
             dup_rate   = DUP_CLAIM_RATES[state_idx]
 
-            # Per-state total with ±40% deterministic variance
             base_total   = PROFILE_TOTALS[profile]
-            var_frac     = (_h(state_idx, 7) - 50) / 100.0  # -0.50 to +0.49
+            var_frac     = (_h(state_idx, 7) - 50) / 100.0
             total_issues = max(10, int(round(base_total * (1 + var_frac * 0.4))))
-            # Reserve one issue per quarter for duplicate_claims
             non_dup_total = max(8, total_issues - len(QUARTERS))
 
-            # Per-type weights for non-dup types (deterministic per state)
-            weights = [0.5 + _h(state_idx, ti, 3) / 100.0 * 3.0 for ti in range(len(NON_DUP_TYPES))]
+            weights = [0.5 + _h(state_idx, ti, 3) / 100.0 * 3.0
+                       for ti in range(len(NON_DUP_TYPES))]
             total_w = sum(weights)
             type_counts = [max(1, round(w / total_w * non_dup_total)) for w in weights]
-            # Correct rounding drift
             diff = non_dup_total - sum(type_counts)
             for i in range(abs(diff)):
                 idx_adj = i % len(type_counts)
-                type_counts[idx_adj] += (1 if diff > 0 else (-1 if type_counts[idx_adj] > 1 else 0))
+                type_counts[idx_adj] += (
+                    1 if diff > 0 else (-1 if type_counts[idx_adj] > 1 else 0))
 
             open_p, done_p, canc_p = PROFILE_STATUS_DIST[profile]
 
-            # ── duplicate_claims: one issue per reporting quarter ─────────
+            # duplicate_claims: one issue per quarter
             for qi, (qlabel, qstart, qlen) in enumerate(QUARTERS):
                 sd_off = _h(state_idx, qi) % min(20, qlen // 4)
                 sd = qstart + _td(days=sd_off)
-                # Most recent quarter stays open; prior quarters are resolved
                 status = 'open' if qi == len(QUARTERS) - 1 else 'done'
                 if status == 'done':
-                    work_days = 20 + _h(state_idx, qi, 1) % 40
-                    ed = sd + _td(days=work_days)
+                    ed = sd + _td(days=20 + _h(state_idx, qi, 1) % 40)
                 else:
                     ed = None
-                metric = round(dup_rate + (_h(state_idx, qi, 2) - 50) / 500.0, 2)
-                metric = max(0.1, min(9.9, metric))
-                title  = state_name + ' – ' + CMS_ISSUE_TITLES['duplicate_claims'] + ' (' + qlabel + ')'
-                desc   = CMS_ISSUE_DESCRIPTIONS['duplicate_claims'][(qi + state_idx) % 3]
-                prio   = 'high' if dup_rate > 4.0 else 'medium'
+                metric = max(0.1, min(9.9,
+                    round(dup_rate + (_h(state_idx, qi, 2) - 50) / 500.0, 2)))
+                title = (state_name + ' \u2013 ' +
+                         CMS_ISSUE_TITLES['duplicate_claims'] +
+                         ' (' + qlabel + ')')
+                desc  = CMS_ISSUE_DESCRIPTIONS['duplicate_claims'][
+                            (qi + state_idx) % 3]
+                prio  = 'high' if dup_rate > 4.0 else 'medium'
                 cursor.execute(
                     'INSERT INTO issues '
-                    '(state_id, title, description, status, priority, issue_type, '
-                    'metric_value, start_date, end_date) '
+                    '(state_id, title, description, status, priority, issue_type,'
+                    ' metric_value, start_date, end_date) '
                     'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
-                    (state_id, title, desc, status, prio, 'duplicate_claims', metric,
-                     sd.strftime('%Y-%m-%d'), ed.strftime('%Y-%m-%d') if ed else None))
+                    (state_id, title, desc, status, prio, 'duplicate_claims',
+                     metric,
+                     sd.strftime('%Y-%m-%d'),
+                     ed.strftime('%Y-%m-%d') if ed else None))
                 iid = cursor.lastrowid
                 for tname in (['completed', 'will probably benefit']
                                if status == 'done' else
                                ['needs improvement', 'in progress', 'urgent']):
                     tid = tag_lookup.get(tname)
                     if tid:
-                        cursor.execute('INSERT OR IGNORE INTO issue_tags VALUES (?, ?)', (iid, tid))
+                        cursor.execute(
+                            'INSERT OR IGNORE INTO issue_tags VALUES (?, ?)',
+                            (iid, tid))
 
-            # ── non-duplicate issue types ─────────────────────────────────
+            # non-duplicate issue types
             for ti, issue_type in enumerate(NON_DUP_TYPES):
                 n = type_counts[ti]
                 for k in range(n):
                     qi = _h(state_idx, ti, k + 5) % len(QUARTERS)
                     qlabel, qstart, qlen = QUARTERS[qi]
                     label = CMS_ISSUE_TITLES[issue_type]
-                    title = (state_name + ' – ' + label + ' (' + qlabel + ')'
-                             if n <= 1 else
-                             state_name + ' – ' + label + ' #' + str(k + 1) + ' (' + qlabel + ')')
-                    desc = CMS_ISSUE_DESCRIPTIONS[issue_type][(ti + k + state_idx) % 3]
-                    base_m = CMS_BASE_COUNTS[issue_type]
-                    factor = 0.25 + _h(state_idx, ti, k + 1) / 100.0 * 2.75
-                    metric_val = round(base_m * factor)
+                    title = (state_name + ' \u2013 ' + label +
+                             (' (' + qlabel + ')' if n <= 1 else
+                              ' #' + str(k + 1) + ' (' + qlabel + ')'))
+                    desc = CMS_ISSUE_DESCRIPTIONS[issue_type][
+                               (ti + k + state_idx) % 3]
+                    metric_val = round(
+                        CMS_BASE_COUNTS[issue_type] *
+                        (0.25 + _h(state_idx, ti, k + 1) / 100.0 * 2.75))
                     rnd = _h(state_idx, ti * 100 + k + 9) % 100
                     if rnd < int(done_p * 100):
                         status = 'done'
@@ -334,7 +334,8 @@ def init_db():
                         status = 'cancelled'
                     else:
                         status = 'open'
-                    priority = ['low', 'medium', 'high', 'medium', 'high'][_h(state_idx, ti, k + 2) % 5]
+                    priority = ['low', 'medium', 'high', 'medium', 'high'][
+                                   _h(state_idx, ti, k + 2) % 5]
                     sd_off = _h(state_idx, ti, k + 3) % min(40, qlen // 2)
                     sd = qstart + _td(days=sd_off)
                     if status in ('done', 'cancelled'):
@@ -346,27 +347,31 @@ def init_db():
                         ed = None
                     cursor.execute(
                         'INSERT INTO issues '
-                        '(state_id, title, description, status, priority, issue_type, '
-                        'metric_value, start_date, end_date) '
+                        '(state_id, title, description, status, priority,'
+                        ' issue_type, metric_value, start_date, end_date) '
                         'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
-                        (state_id, title, desc, status, priority, issue_type, metric_val,
-                         sd.strftime('%Y-%m-%d'), ed.strftime('%Y-%m-%d') if ed else None))
+                        (state_id, title, desc, status, priority, issue_type,
+                         metric_val,
+                         sd.strftime('%Y-%m-%d'),
+                         ed.strftime('%Y-%m-%d') if ed else None))
                     iid = cursor.lastrowid
                     if status == 'done':
-                        tnames = ['completed', 'will probably benefit', 'in progress']
+                        tnames = ['completed', 'will probably benefit',
+                                  'in progress']
                     elif status == 'cancelled':
                         tnames = ['will not benefit', 'in progress']
                     else:
                         tnames = (['needs improvement', 'in progress', 'urgent']
                                   if priority == 'high' else
-                                  ['needs improvement', 'will probably benefit', 'in progress'])
+                                  ['needs improvement', 'will probably benefit',
+                                   'in progress'])
                     for tname in tnames:
                         tid = tag_lookup.get(tname)
                         if tid:
-                            cursor.execute('INSERT OR IGNORE INTO issue_tags VALUES (?, ?)', (iid, tid))
+                            cursor.execute(
+                                'INSERT OR IGNORE INTO issue_tags VALUES (?, ?)',
+                                (iid, tid))
 
-    db.commit()
-    db.close()
     db.commit()
     db.close()
 
