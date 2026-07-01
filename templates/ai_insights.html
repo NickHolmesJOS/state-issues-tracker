@@ -128,11 +128,21 @@
             <div class="card shadow-sm">
                 <div class="card-body">
                     <h5 class="card-title mb-3">
-                        <i class="bi bi-chat-dots"></i> Ask the Issue Analyst (NLP)
+                        <i class="bi bi-robot"></i> Ask the CMS Quality Analyst
                     </h5>
-                    <p class="text-muted small mb-3">Examples: "best states for environment", "open issues in texas", "compare healthcare"</p>
+                    <p class="text-muted small mb-2">Ask about Medicaid claim quality issues across all 50 states. Click an example or type your own:</p>
+                    <div class="d-flex flex-wrap gap-2 mb-3">
+                        <button class="btn btn-sm btn-outline-secondary example-chip">duplicate claim rates</button>
+                        <button class="btn btn-sm btn-outline-secondary example-chip">worst states for duplicate claims</button>
+                        <button class="btn btn-sm btn-outline-secondary example-chip">open issues in Texas</button>
+                        <button class="btn btn-sm btn-outline-secondary example-chip">invalid diagnosis code Q1 2026</button>
+                        <button class="btn btn-sm btn-outline-secondary example-chip">best states payment amount exceeded</button>
+                        <button class="btn btn-sm btn-outline-secondary example-chip">compare Q1 2026</button>
+                        <button class="btn btn-sm btn-outline-secondary example-chip">referential integrity backlog</button>
+                        <button class="btn btn-sm btn-outline-secondary example-chip">Vermont claim quality</button>
+                    </div>
                     <div class="input-group mb-3">
-                        <input id="chatQuestion" type="text" class="form-control" placeholder="Ask a question about the issues data...">
+                        <input id="chatQuestion" type="text" class="form-control" placeholder="e.g. worst states for duplicate claims...">
                         <button id="askBtn" class="btn btn-dark" type="button">
                             <i class="bi bi-send"></i> Ask
                         </button>
@@ -459,6 +469,11 @@
         const question = input.value.trim();
         if (!question) return;
 
+        const box = document.getElementById('chatAnswer');
+        box.innerHTML = '<span class="spinner-border spinner-border-sm me-2" role="status"></span>Analyzing CMS claim data...';
+        box.className = 'alert alert-secondary mb-0';
+        box.style.display = 'block';
+
         fetch('/api/ai-chat', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -466,20 +481,47 @@
         })
         .then(r => r.json())
         .then(data => {
-            const box = document.getElementById('chatAnswer');
-            const details = (data.details || []).map(d => `<li>${d}</li>`).join('');
+            const details = (data.details || []);
+            const listItems = details.map(d => {
+                if (d.startsWith('Try asking:')) {
+                    const q = d.replace('Try asking: ', '').replace(/"/g, '').trim();
+                    return `<li><a href="#" class="suggestion-link text-primary small">${d}</a></li>`;
+                }
+                return `<li class="small">${d}</li>`;
+            }).join('');
+            box.className = 'alert alert-light mb-0';
             box.innerHTML = `
-                <div><strong>Answer:</strong> ${data.answer || 'No answer available.'}</div>
-                ${details ? `<ul class="mt-2 mb-0">${details}</ul>` : ''}
+                <div class="d-flex align-items-start gap-2">
+                    <i class="bi bi-robot fs-5 text-primary mt-1 flex-shrink-0"></i>
+                    <div class="flex-grow-1">
+                        <div class="fw-semibold mb-1">${data.answer || 'No answer available.'}</div>
+                        ${listItems ? `<ul class="mt-2 mb-0 ps-3">${listItems}</ul>` : ''}
+                    </div>
+                </div>
             `;
-            box.style.display = 'block';
+            box.querySelectorAll('.suggestion-link').forEach(a => {
+                a.addEventListener('click', e => {
+                    e.preventDefault();
+                    const txt = a.textContent.replace('Try asking: ', '').replace(/"/g, '').trim();
+                    document.getElementById('chatQuestion').value = txt;
+                    askQuestion();
+                });
+            });
         })
         .catch(() => {
-            const box = document.getElementById('chatAnswer');
-            box.innerHTML = 'Unable to process question right now.';
+            box.className = 'alert alert-danger mb-0';
+            box.innerHTML = '<i class="bi bi-exclamation-triangle me-2"></i>Unable to process question right now.';
             box.style.display = 'block';
         });
     }
+
+    // Example chip click-to-fill-and-submit
+    document.querySelectorAll('.example-chip').forEach(btn => {
+        btn.addEventListener('click', () => {
+            document.getElementById('chatQuestion').value = btn.textContent.trim();
+            askQuestion();
+        });
+    });
 
     refreshScenarioList();
 </script>

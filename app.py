@@ -213,164 +213,190 @@ def init_db():
 
     db.commit()
 
-    # ── CMS Variance Seeding ──────────────────────────────────────────────────
-    STATE_PROFILES = [
-        0, 2, 0, 3, 1, 3, 1, 4, 0, 2,  # AL AK AZ AR CA CO CT DE FL GA
-        1, 3, 0, 4, 1, 2, 0, 3, 1, 2,  # HI ID IL IN IA KS KY LA ME MD
-        1, 2, 0, 4, 1, 0, 2, 1, 3, 0,  # MA MI MN MS MO MT NE NV NH NJ
-        3, 1, 1, 2, 0, 3, 1, 1, 3, 2,  # NM NY NC ND OH OK OR PA RI SC
-        1, 4, 0, 2, 0, 2, 1, 4, 0, 3   # SD TN TX UT VT VA WA WV WI WY
-    ]
-    PROFILE_TOTALS = [18, 40, 66, 96, 142]
-    PROFILE_STATUS_DIST = [
-        (0.10, 0.82, 0.08),
-        (0.20, 0.70, 0.10),
-        (0.40, 0.45, 0.15),
-        (0.62, 0.26, 0.12),
-        (0.76, 0.14, 0.10),
-    ]
-    NON_DUP_TYPES = [t for t in CMS_ISSUE_TYPES if t != 'duplicate_claims']
-    from datetime import date as _date, timedelta as _td
-    QUARTERS = [
-        ('Q2 2025', _date(2025, 4, 1),  91),
-        ('Q3 2025', _date(2025, 7, 1),  92),
-        ('Q4 2025', _date(2025, 10, 1), 92),
-        ('Q1 2026', _date(2026, 1, 1),  90),
-    ]
+    # Seed demo issues only if none exist
+    cursor.execute('SELECT COUNT(*) FROM issues')
+    has_issues = cursor.fetchone()[0] > 0
 
-    def _h(a, b=0, c=0):
-        return (a * 37 + b * 23 + c * 13 + a * b + b * c + 1) % 100
+    if not has_issues:
+        # Add dummy issues
+        dummy_issues = [
+            ('California', 'Infrastructure improvement program', 'Needs modernization of public roads', 'open', 'high', 'infrastructure'),
+            ('California', 'Education funding boost', 'Increase funding for tech programs', 'done', 'medium', 'education'),
+            ('California', 'Environmental cleanup', 'Clean up coastal areas', 'cancelled', 'medium', 'environment'),
+            ('Texas', 'Water resource management', 'Better irrigation systems', 'open', 'high', 'environment'),
+            ('Texas', 'Job training initiatives', 'Tech workforce development', 'open', 'medium', 'workforce'),
+            ('Texas', 'Health care expansion', 'Rural clinic establishment', 'done', 'high', 'healthcare'),
+            ('Florida', 'Hurricane preparedness', 'Emergency response systems', 'open', 'high', 'emergency'),
+            ('Florida', 'Tourism promotion', 'New destination marketing', 'done', 'low', 'commerce'),
+            ('Florida', 'Coastal erosion control', 'Beach restoration project', 'open', 'high', 'environment'),
+            ('New York', 'Public transit upgrade', 'Modernize subway system', 'open', 'medium', 'infrastructure'),
+            ('New York', 'Tech hub development', 'Support startups and innovation', 'done', 'high', 'technology'),
+            ('New York', 'Housing affordability', 'Build more affordable units', 'open', 'high', 'housing'),
+            ('Pennsylvania', 'Manufacturing support', 'Revitalize industrial areas', 'open', 'medium', 'commerce'),
+            ('Pennsylvania', 'Clean energy transition', 'Shift to renewable sources', 'open', 'high', 'environment'),
+            ('Pennsylvania', 'Community development', 'Support small businesses', 'done', 'medium', 'commerce'),
+            ('Illinois', 'Transportation network', 'Expand rail infrastructure', 'open', 'medium', 'infrastructure'),
+            ('Illinois', 'STEM education', 'Improve science programs', 'done', 'high', 'education'),
+            ('Illinois', 'Pollution reduction', 'Air quality improvement', 'open', 'medium', 'environment'),
+        ]
 
-    cursor.execute("SELECT COUNT(*) FROM issues WHERE issue_type = 'duplicate_claims'")
-    cms_seeded = cursor.fetchone()[0] > 0
+        tag_mapping = {
+            0: [0, 2],  # California issue 1: needs improvement, will not benefit
+            1: [1, 4],  # California issue 2: will probably benefit, completed
+            2: [2, 5],  # California issue 3: will not benefit, in progress
+            3: [0, 1],  # Texas issue 1: needs improvement, will probably benefit
+            4: [1, 2],  # Texas issue 2: will probably benefit, will not benefit
+            5: [1, 4],  # Texas issue 3: will probably benefit, completed
+            6: [0, 3],  # Florida issue 1: needs improvement, urgent
+            7: [4, 1],  # Florida issue 2: completed, will probably benefit
+            8: [0, 3],  # Florida issue 3: needs improvement, urgent
+            9: [0, 1],  # New York issue 1: needs improvement, will probably benefit
+            10: [1, 4], # New York issue 2: will probably benefit, completed
+            11: [0, 1], # New York issue 3: needs improvement, will probably benefit
+            12: [1, 2], # Pennsylvania issue 1: will probably benefit, will not benefit
+            13: [1, 3], # Pennsylvania issue 2: will probably benefit, urgent
+            14: [4, 1], # Pennsylvania issue 3: completed, will probably benefit
+            15: [0, 1], # Illinois issue 1: needs improvement, will probably benefit
+            16: [4, 1], # Illinois issue 2: completed, will probably benefit
+            17: [0, 1], # Illinois issue 3: needs improvement, will probably benefit
+        }
 
-    if not cms_seeded:
-        cursor.execute('DELETE FROM issue_tags')
-        cursor.execute('DELETE FROM issues')
+        for idx, (state, title, desc, status, priority, issue_type) in enumerate(dummy_issues):
+            cursor.execute('''
+                INSERT INTO issues (state_id, title, description, status, priority, issue_type)
+                VALUES ((SELECT id FROM states WHERE name = ?), ?, ?, ?, ?, ?)
+            ''', (state, title, desc, status, priority, issue_type))
+
+            issue_id = cursor.lastrowid
+            for tag_id in tag_mapping.get(idx, []):
+                cursor.execute('INSERT INTO issue_tags (issue_id, tag_id) VALUES (?, ?)', (issue_id, tag_id + 1))
+
+    # Ensure every state has at least one issue
+    cursor.execute('''
+        SELECT s.name
+        FROM states s
+        LEFT JOIN issues i ON i.state_id = s.id
+        GROUP BY s.id, s.name
+        HAVING COUNT(i.id) = 0
+    ''')
+
+    missing_issue_states = [row[0] for row in cursor.fetchall()]
+    for state_name in missing_issue_states:
+        cursor.execute('''
+            INSERT INTO issues (state_id, title, description, status, priority, issue_type)
+            VALUES (
+                (SELECT id FROM states WHERE name = ?),
+                ?, ?, 'open', 'medium', 'general'
+            )
+        ''', (
+            state_name,
+            f'{state_name} Community Improvement Plan',
+            f'Baseline issue record for {state_name}. Add custom issues to track local priorities.'
+        ))
+
+    # Generate additional diverse issues so the dataset is substantial and realistic
+    cursor.execute('SELECT COUNT(*) FROM issues')
+    current_issue_count = cursor.fetchone()[0]
+    target_issue_count = 520
+
+    if current_issue_count < target_issue_count:
         cursor.execute('SELECT id, name FROM states ORDER BY name')
         state_rows = cursor.fetchall()
+
         cursor.execute('SELECT id, name FROM tags ORDER BY id')
         tag_rows = cursor.fetchall()
         tag_lookup = {row['name']: row['id'] for row in tag_rows}
 
-        for state_idx, state_row in enumerate(state_rows):
-            state_id   = state_row['id']
-            state_name = state_row['name']
-            profile    = STATE_PROFILES[state_idx]
-            dup_rate   = DUP_CLAIM_RATES[state_idx]
+        status_cycle = ['open', 'done', 'open', 'open', 'done', 'cancelled', 'open', 'done']
+        priority_cycle = ['high', 'medium', 'low', 'medium', 'high', 'medium']
 
-            base_total   = PROFILE_TOTALS[profile]
-            var_frac     = (_h(state_idx, 7) - 50) / 100.0
-            total_issues = max(10, int(round(base_total * (1 + var_frac * 0.4))))
-            non_dup_total = max(8, total_issues - len(QUARTERS))
+        to_create = target_issue_count - current_issue_count
+        for idx in range(to_create):
+            state = state_rows[idx % len(state_rows)]
+            issue_type = ISSUE_TYPES[(idx + state['id']) % len(ISSUE_TYPES)]
+            title_template = ISSUE_TITLE_TEMPLATES[issue_type][idx % 3]
+            title = f"{state['name']} {title_template} #{idx + 1}"
+            description = (
+                f"{state['name']} program update for {issue_type.replace('_', ' ')}. "
+                f"Tracks milestones, implementation risk, and outcomes for quality reporting."
+            )
 
-            weights = [0.5 + _h(state_idx, ti, 3) / 100.0 * 3.0
-                       for ti in range(len(NON_DUP_TYPES))]
-            total_w = sum(weights)
-            type_counts = [max(1, round(w / total_w * non_dup_total)) for w in weights]
-            diff = non_dup_total - sum(type_counts)
-            for i in range(abs(diff)):
-                idx_adj = i % len(type_counts)
-                type_counts[idx_adj] += (
-                    1 if diff > 0 else (-1 if type_counts[idx_adj] > 1 else 0))
+            status = status_cycle[idx % len(status_cycle)]
+            priority = priority_cycle[(idx + state['id']) % len(priority_cycle)]
 
-            open_p, done_p, canc_p = PROFILE_STATUS_DIST[profile]
+            cursor.execute('''
+                INSERT INTO issues (state_id, title, description, status, priority, issue_type)
+                VALUES (?, ?, ?, ?, ?, ?)
+            ''', (state['id'], title, description, status, priority, issue_type))
 
-            # duplicate_claims: one issue per quarter
-            for qi, (qlabel, qstart, qlen) in enumerate(QUARTERS):
-                sd_off = _h(state_idx, qi) % min(20, qlen // 4)
-                sd = qstart + _td(days=sd_off)
-                status = 'open' if qi == len(QUARTERS) - 1 else 'done'
-                if status == 'done':
-                    ed = sd + _td(days=20 + _h(state_idx, qi, 1) % 40)
+            issue_id = cursor.lastrowid
+
+            # Attach multiple tags to improve downstream analytics
+            tag_names = {'in progress'}
+            if status == 'done':
+                tag_names.add('completed')
+                tag_names.add('will probably benefit')
+            elif status == 'cancelled':
+                tag_names.add('will not benefit')
+                if priority == 'high':
+                    tag_names.add('urgent')
+            else:
+                tag_names.add('needs improvement')
+                if priority == 'high':
+                    tag_names.add('urgent')
                 else:
-                    ed = None
-                metric = max(0.1, min(9.9,
-                    round(dup_rate + (_h(state_idx, qi, 2) - 50) / 500.0, 2)))
-                title = (state_name + ' \u2013 ' +
-                         CMS_ISSUE_TITLES['duplicate_claims'] +
-                         ' (' + qlabel + ')')
-                desc  = CMS_ISSUE_DESCRIPTIONS['duplicate_claims'][
-                            (qi + state_idx) % 3]
-                prio  = 'high' if dup_rate > 4.0 else 'medium'
-                cursor.execute(
-                    'INSERT INTO issues '
-                    '(state_id, title, description, status, priority, issue_type,'
-                    ' metric_value, start_date, end_date) '
-                    'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
-                    (state_id, title, desc, status, prio, 'duplicate_claims',
-                     metric,
-                     sd.strftime('%Y-%m-%d'),
-                     ed.strftime('%Y-%m-%d') if ed else None))
-                iid = cursor.lastrowid
-                for tname in (['completed', 'will probably benefit']
-                               if status == 'done' else
-                               ['needs improvement', 'in progress', 'urgent']):
-                    tid = tag_lookup.get(tname)
-                    if tid:
-                        cursor.execute(
-                            'INSERT OR IGNORE INTO issue_tags VALUES (?, ?)',
-                            (iid, tid))
+                    tag_names.add('will probably benefit')
 
-            # non-duplicate issue types
-            for ti, issue_type in enumerate(NON_DUP_TYPES):
-                n = type_counts[ti]
-                for k in range(n):
-                    qi = _h(state_idx, ti, k + 5) % len(QUARTERS)
-                    qlabel, qstart, qlen = QUARTERS[qi]
-                    label = CMS_ISSUE_TITLES[issue_type]
-                    title = (state_name + ' \u2013 ' + label +
-                             (' (' + qlabel + ')' if n <= 1 else
-                              ' #' + str(k + 1) + ' (' + qlabel + ')'))
-                    desc = CMS_ISSUE_DESCRIPTIONS[issue_type][
-                               (ti + k + state_idx) % 3]
-                    metric_val = round(
-                        CMS_BASE_COUNTS[issue_type] *
-                        (0.25 + _h(state_idx, ti, k + 1) / 100.0 * 2.75))
-                    rnd = _h(state_idx, ti * 100 + k + 9) % 100
-                    if rnd < int(done_p * 100):
-                        status = 'done'
-                    elif rnd < int((done_p + canc_p) * 100):
-                        status = 'cancelled'
-                    else:
-                        status = 'open'
-                    priority = ['low', 'medium', 'high', 'medium', 'high'][
-                                   _h(state_idx, ti, k + 2) % 5]
-                    sd_off = _h(state_idx, ti, k + 3) % min(40, qlen // 2)
-                    sd = qstart + _td(days=sd_off)
-                    if status in ('done', 'cancelled'):
-                        work_days = (14 + _h(state_idx, ti, k + 4) % 77
-                                     if status == 'done' else
-                                     7 + _h(state_idx, ti, k + 4) % 42)
-                        ed = sd + _td(days=work_days)
-                    else:
-                        ed = None
-                    cursor.execute(
-                        'INSERT INTO issues '
-                        '(state_id, title, description, status, priority,'
-                        ' issue_type, metric_value, start_date, end_date) '
-                        'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
-                        (state_id, title, desc, status, priority, issue_type,
-                         metric_val,
-                         sd.strftime('%Y-%m-%d'),
-                         ed.strftime('%Y-%m-%d') if ed else None))
-                    iid = cursor.lastrowid
-                    if status == 'done':
-                        tnames = ['completed', 'will probably benefit',
-                                  'in progress']
-                    elif status == 'cancelled':
-                        tnames = ['will not benefit', 'in progress']
-                    else:
-                        tnames = (['needs improvement', 'in progress', 'urgent']
-                                  if priority == 'high' else
-                                  ['needs improvement', 'will probably benefit',
-                                   'in progress'])
-                    for tname in tnames:
-                        tid = tag_lookup.get(tname)
-                        if tid:
-                            cursor.execute(
-                                'INSERT OR IGNORE INTO issue_tags VALUES (?, ?)',
-                                (iid, tid))
+            for tag_name in tag_names:
+                tag_id = tag_lookup.get(tag_name)
+                if tag_id:
+                    cursor.execute('INSERT OR IGNORE INTO issue_tags (issue_id, tag_id) VALUES (?, ?)', (issue_id, tag_id))
+
+    # Ensure each state has at least one issue for each issue type (improves filtered AI accuracy)
+    cursor.execute('SELECT id, name FROM states ORDER BY name')
+    state_rows = cursor.fetchall()
+    cursor.execute('SELECT id, name FROM tags ORDER BY id')
+    tag_rows = cursor.fetchall()
+    tag_lookup = {row['name']: row['id'] for row in tag_rows}
+
+    for state in state_rows:
+        for type_idx, issue_type in enumerate(ISSUE_TYPES):
+            cursor.execute('''
+                SELECT COUNT(*)
+                FROM issues
+                WHERE state_id = ? AND LOWER(issue_type) = ?
+            ''', (state['id'], issue_type))
+            existing_count = cursor.fetchone()[0]
+
+            if existing_count == 0:
+                selector = (state['id'] + type_idx) % 6
+                if selector in (0, 3):
+                    status = 'done'
+                    tags_to_add = ['completed', 'will probably benefit', 'in progress']
+                elif selector == 5:
+                    status = 'cancelled'
+                    tags_to_add = ['will not benefit', 'in progress']
+                else:
+                    status = 'open'
+                    tags_to_add = ['needs improvement', 'in progress']
+
+                priority = ['low', 'medium', 'high'][(state['id'] + type_idx) % 3]
+                title = f"{state['name']} {issue_type.replace('_', ' ').title()} Quality Initiative"
+                description = (
+                    f"Standardized {issue_type.replace('_', ' ')} quality tracking record for {state['name']} "
+                    f"to support consistent cross-state benchmarking."
+                )
+
+                cursor.execute('''
+                    INSERT INTO issues (state_id, title, description, status, priority, issue_type)
+                    VALUES (?, ?, ?, ?, ?, ?)
+                ''', (state['id'], title, description, status, priority, issue_type))
+
+                issue_id = cursor.lastrowid
+                for tag_name in tags_to_add:
+                    tag_id = tag_lookup.get(tag_name)
+                    if tag_id:
+                        cursor.execute('INSERT OR IGNORE INTO issue_tags (issue_id, tag_id) VALUES (?, ?)', (issue_id, tag_id))
 
     db.commit()
     db.close()
@@ -880,7 +906,7 @@ def generate_ai_insights(data, issue_type):
 
 @app.route('/api/ai-chat', methods=['POST'])
 def ai_chat():
-    """Simple NLP-style Q&A over issue data"""
+    """CMS-aware NLP Q&A over Medicaid claim quality data"""
     payload = request.get_json(silent=True) or {}
     question = (payload.get('question') or '').strip()
     if not question:
@@ -890,73 +916,436 @@ def ai_chat():
     db = get_db()
     cursor = db.cursor()
 
-    cursor.execute('SELECT name FROM states ORDER BY name')
-    state_names = [r[0] for r in cursor.fetchall()]
+    cursor.execute('SELECT id, name FROM states ORDER BY name')
+    state_rows = {r[0]: r[1] for r in cursor.fetchall()}
+    state_names = list(state_rows.values())
 
-    cursor.execute('SELECT DISTINCT LOWER(issue_type) FROM issues ORDER BY issue_type')
-    issue_types = [r[0] for r in cursor.fetchall() if r[0]]
-    db.close()
+    # ── CMS type aliases ──────────────────────────────────────────────────────
+    CMS_ALIASES = {
+        'duplicate':     'duplicate_claims',
+        'dup':           'duplicate_claims',
+        'duplicate claim': 'duplicate_claims',
+        'duplicate claims': 'duplicate_claims',
+        'diagnosis':     'invalid_diagnosis_code',
+        'icd':           'invalid_diagnosis_code',
+        'invalid diagnosis': 'invalid_diagnosis_code',
+        'debit':         'debit_credit_mismatch',
+        'credit':        'debit_credit_mismatch',
+        'mismatch':      'debit_credit_mismatch',
+        'null':          'null_recipient_values',
+        'recipient':     'null_recipient_values',
+        'procedure':     'improper_procedure_code',
+        'hcpcs':         'improper_procedure_code',
+        'referential':   'referential_integrity',
+        'integrity':     'referential_integrity',
+        'npi':           'referential_integrity',
+        'payment':       'payment_amount_exceeded',
+        'exceeded':      'payment_amount_exceeded',
+        'overpayment':   'payment_amount_exceeded',
+        'birth':         'birth_date_error',
+        'birth date':    'birth_date_error',
+        'discharge':     'discharge_date_error',
+        'discharge date': 'discharge_date_error',
+    }
+    CMS_LABELS = {
+        'duplicate_claims':        'Duplicate Claims',
+        'invalid_diagnosis_code':  'Invalid Diagnosis Code',
+        'debit_credit_mismatch':   'Debit/Credit Mismatch',
+        'null_recipient_values':   'Null Recipient Values',
+        'improper_procedure_code': 'Improper Procedure Code',
+        'referential_integrity':   'Referential Integrity',
+        'payment_amount_exceeded': 'Payment Amount Exceeded',
+        'birth_date_error':        'Birth Date Error',
+        'discharge_date_error':    'Discharge Date Error',
+    }
 
-    matched_state = next((s for s in state_names if s.lower() in q), None)
-    matched_type = next((t for t in issue_types if t in q), '')
+    # Match issue type from query
+    matched_type = ''
+    for alias, canonical in CMS_ALIASES.items():
+        if alias in q:
+            matched_type = canonical
+            break
+    if not matched_type:
+        for canonical in CMS_LABELS:
+            if canonical.replace('_', ' ') in q or canonical in q:
+                matched_type = canonical
+                break
 
-    rows = get_comparison_rows(issue_type=matched_type)
-    eligible = [r for r in rows if (r.get('total') or 0) > 0]
-    ranked = sorted(eligible, key=lambda x: x.get('composite_score', 0), reverse=True)
+    # Match state from query
+    matched_state = next(
+        (s for s in sorted(state_names, key=len, reverse=True) if s.lower() in q),
+        None)
 
+    # Match quarter from query
+    matched_quarter = None
+    for qtr in ['Q1 2026', 'Q4 2025', 'Q3 2025', 'Q2 2025']:
+        if qtr.lower() in q:
+            matched_quarter = qtr
+            break
+
+    type_label = CMS_LABELS.get(matched_type, matched_type.replace('_', ' ').title()) if matched_type else 'all issue types'
+
+    # ── Helper: per-state CMS metrics from DB ────────────────────────────────
+    def cms_state_metrics(issue_type_filter='', state_id_filter=None):
+        sql_type = issue_type_filter or ''
+        params = [sql_type, sql_type]
+        where = f'AND s.id = {state_id_filter}' if state_id_filter else ''
+        cursor.execute(f'''
+            SELECT s.id, s.name as state,
+                COUNT(i.id) as total,
+                SUM(CASE WHEN i.status = "done"      THEN 1 ELSE 0 END) as resolved,
+                SUM(CASE WHEN i.status = "open"      THEN 1 ELSE 0 END) as open_cnt,
+                SUM(CASE WHEN i.status = "cancelled" THEN 1 ELSE 0 END) as cancelled,
+                AVG(CASE WHEN i.issue_type = "duplicate_claims"
+                         THEN i.metric_value END) as avg_dup_rate,
+                MAX(CASE WHEN i.title LIKE "%Q1 2026%" AND i.issue_type = "duplicate_claims"
+                         THEN i.metric_value END) as current_dup_rate,
+                SUM(CASE WHEN i.issue_type != "duplicate_claims"
+                         THEN i.metric_value ELSE 0 END) as total_case_volume
+            FROM states s
+            LEFT JOIN issues i ON s.id = i.state_id
+                AND (? = "" OR i.issue_type = ?)
+            {where}
+            GROUP BY s.id, s.name
+        ''', params)
+        results = []
+        for row in cursor.fetchall():
+            d = dict(row)
+            total = d['total'] or 0
+            resolved = d['resolved'] or 0
+            d['resolution_rate'] = round(resolved / total * 100, 1) if total else 0
+            d['backlog_pct'] = round((d['open_cnt'] or 0) / total * 100, 1) if total else 0
+            results.append(d)
+        return results
+
+    # ── INTENT: state-specific question ──────────────────────────────────────
     if matched_state:
-        item = next((r for r in rows if r['state'] == matched_state), None)
-        if not item:
-            return jsonify({'answer': f'I could not find data for {matched_state}.', 'details': []})
+        cursor.execute('SELECT id FROM states WHERE name = ?', (matched_state,))
+        sid_row = cursor.fetchone()
+        if not sid_row:
+            db.close()
+            return jsonify({'answer': f'No data found for {matched_state}.', 'details': []})
+        sid = sid_row['id']
+        state_idx = state_names.index(matched_state)
+        dup_rate = DUP_CLAIM_RATES[state_idx] if state_idx < len(DUP_CLAIM_RATES) else 0
 
+        # Per-type breakdown for this state
+        cursor.execute('''
+            SELECT issue_type,
+                   COUNT(*) as total,
+                   SUM(CASE WHEN status = "open"      THEN 1 ELSE 0 END) as open_cnt,
+                   SUM(CASE WHEN status = "done"      THEN 1 ELSE 0 END) as resolved,
+                   SUM(CASE WHEN status = "cancelled" THEN 1 ELSE 0 END) as cancelled,
+                   MAX(CASE WHEN title LIKE "%Q1 2026%" THEN metric_value END) as q1_metric
+            FROM issues WHERE state_id = ?
+            GROUP BY issue_type
+        ''', (sid,))
+        type_rows = {r['issue_type']: dict(r) for r in cursor.fetchall()}
+
+        total_issues = sum(v['total'] for v in type_rows.values())
+        total_open   = sum(v['open_cnt'] for v in type_rows.values())
+        total_done   = sum(v['resolved'] for v in type_rows.values())
+
+        # Nationwide dup rank
+        cursor.execute('''
+            SELECT s.name, MAX(CASE WHEN i.title LIKE "%Q1 2026%"
+                                    AND i.issue_type = "duplicate_claims"
+                               THEN i.metric_value END) as dr
+            FROM states s JOIN issues i ON i.state_id = s.id
+            WHERE i.issue_type = "duplicate_claims"
+            GROUP BY s.id HAVING dr IS NOT NULL ORDER BY dr ASC
+        ''')
+        dup_ranked = [r['name'] for r in cursor.fetchall()]
+        dup_rank = dup_ranked.index(matched_state) + 1 if matched_state in dup_ranked else None
+        dup_row  = type_rows.get('duplicate_claims', {})
+        dup_q1   = dup_row.get('q1_metric') or dup_rate
+
+        if matched_type and matched_type != 'duplicate_claims':
+            tr = type_rows.get(matched_type, {})
+            q1m = tr.get('q1_metric')
+            answer = (
+                f'{matched_state} — {type_label}: '
+                f'{tr.get("total", 0)} total issues, '
+                f'{tr.get("open_cnt", 0)} open, '
+                f'{tr.get("resolved", 0)} resolved.'
+            )
+            details = []
+            if q1m is not None:
+                details.append(f'Q1 2026 case volume: {int(q1m):,}')
+            details += [
+                f'Resolution rate: {round(tr["resolved"]/tr["total"]*100,1) if tr.get("total") else 0}%',
+                f'Duplicate claim rate (overall): {dup_q1}%',
+            ]
+            if dup_rank:
+                details.append(f'Nationwide dup. rank: #{dup_rank} of {len(dup_ranked)} (lower = better)')
+        else:
+            answer = (
+                f'{matched_state} CMS Quality Snapshot: '
+                f'{total_issues} total issues across all claim types — '
+                f'{total_done} resolved, {total_open} still open. '
+                f'Duplicate claim rate: {dup_q1}%.'
+            )
+            details = []
+            if dup_rank:
+                details.append(f'Nationwide dup. rank: #{dup_rank} of {len(dup_ranked)} (1 = lowest rate = best)')
+            # Top 3 open issue types
+            open_types = sorted(
+                [(t, v['open_cnt']) for t, v in type_rows.items() if v.get('open_cnt', 0) > 0],
+                key=lambda x: x[1], reverse=True)[:3]
+            for t, cnt in open_types:
+                details.append(f'Open — {CMS_LABELS.get(t, t)}: {cnt} issues')
+            # Any type with a Q1 2026 metric
+            for t, v in type_rows.items():
+                if v.get('q1_metric') and t != 'duplicate_claims':
+                    details.append(f'Q1 2026 case volume ({CMS_LABELS.get(t, t)}): {int(v["q1_metric"]):,}')
+                    break
+
+        db.close()
+        return jsonify({'answer': answer, 'details': details})
+
+    # ── INTENT: duplicate claims / rates ─────────────────────────────────────
+    if matched_type == 'duplicate_claims' or re.search(
+            r'\b(dup|duplicate|claim rate)\b', q):
+        cursor.execute('''
+            SELECT s.name,
+                   MAX(CASE WHEN i.title LIKE "%Q1 2026%"
+                            AND i.issue_type = "duplicate_claims"
+                       THEN i.metric_value END) as rate
+            FROM states s JOIN issues i ON i.state_id = s.id
+            WHERE i.issue_type = "duplicate_claims"
+            GROUP BY s.id HAVING rate IS NOT NULL ORDER BY rate ASC
+        ''')
+        dup_rows = cursor.fetchall()
+        db.close()
+        if not dup_rows:
+            return jsonify({'answer': 'No duplicate claims data found.', 'details': []})
+
+        rates = [r['rate'] for r in dup_rows]
+        avg_rate = round(sum(rates) / len(rates), 2)
+
+        if re.search(r'\b(best|lowest|least|top)\b', q):
+            answer = f'States with the lowest duplicate claim rates (Q1 2026):'
+            details = [f"#{i+1} {r['name']}: {r['rate']}%" for i, r in enumerate(dup_rows[:7])]
+        elif re.search(r'\b(worst|highest|most|bottom)\b', q):
+            worst = list(reversed(dup_rows))
+            answer = f'States with the highest duplicate claim rates (Q1 2026):'
+            details = [f"#{i+1} {r['name']}: {r['rate']}%" for i, r in enumerate(worst[:7])]
+        else:
+            best = dup_rows[0]
+            worst = dup_rows[-1]
+            answer = (
+                f'Duplicate Claims — Q1 2026 nationwide: '
+                f'avg rate {avg_rate}%, '
+                f'best {best["name"]} {best["rate"]}%, '
+                f'worst {worst["name"]} {worst["rate"]}%.'
+            )
+            details = [f"{r['name']}: {r['rate']}%" for r in dup_rows[:8]]
+        return jsonify({'answer': answer, 'details': details})
+
+    # ── INTENT: specific non-dup issue type ──────────────────────────────────
+    if matched_type:
+        cursor.execute('''
+            SELECT s.name,
+                   MAX(CASE WHEN i.title LIKE "%Q1 2026%" THEN i.metric_value END) as q1_vol,
+                   SUM(CASE WHEN i.status = "open" THEN 1 ELSE 0 END) as open_cnt,
+                   COUNT(*) as total
+            FROM states s JOIN issues i ON i.state_id = s.id
+            WHERE i.issue_type = ?
+            GROUP BY s.id HAVING q1_vol IS NOT NULL
+            ORDER BY q1_vol ASC
+        ''', (matched_type,))
+        type_ranked = cursor.fetchall()
+        db.close()
+
+        if not type_ranked:
+            return jsonify({'answer': f'No Q1 2026 data found for {type_label}.', 'details': []})
+
+        vols = [r['q1_vol'] for r in type_ranked]
+        avg_vol = round(sum(vols) / len(vols), 0)
+
+        if re.search(r'\b(best|lowest|least|fewest)\b', q):
+            answer = f'{type_label} — states with fewest Q1 2026 cases (best):'
+            details = [f"#{i+1} {r['name']}: {int(r['q1_vol']):,} cases, {r['open_cnt']} open" for i, r in enumerate(type_ranked[:7])]
+        elif re.search(r'\b(worst|highest|most|critical)\b', q):
+            worst_list = list(reversed(type_ranked))
+            answer = f'{type_label} — states with most Q1 2026 cases (worst):'
+            details = [f"#{i+1} {r['name']}: {int(r['q1_vol']):,} cases, {r['open_cnt']} open" for i, r in enumerate(worst_list[:7])]
+        elif re.search(r'\b(open|backlog|unresolved)\b', q):
+            most_open = sorted(type_ranked, key=lambda x: x['open_cnt'], reverse=True)
+            answer = f'{type_label} — states with most open issues:'
+            details = [f"{r['name']}: {r['open_cnt']} open, Q1 vol {int(r['q1_vol']):,}" for r in most_open[:7]]
+        else:
+            best = type_ranked[0]
+            worst_r = type_ranked[-1]
+            answer = (
+                f'{type_label} — Q1 2026 snapshot across {len(type_ranked)} states: '
+                f'avg {int(avg_vol):,} cases. '
+                f'Best: {best["name"]} ({int(best["q1_vol"]):,}). '
+                f'Most cases: {worst_r["name"]} ({int(worst_r["q1_vol"]):,}).'
+            )
+            details = [f"{r['name']}: {int(r['q1_vol']):,} cases" for r in type_ranked[:8]]
+        return jsonify({'answer': answer, 'details': details})
+
+    # ── INTENT: open / backlog ────────────────────────────────────────────────
+    if re.search(r'\b(open|backlog|unresolved|pending)\b', q):
+        cursor.execute('''
+            SELECT s.name,
+                   SUM(CASE WHEN i.status = "open" THEN 1 ELSE 0 END) as open_cnt,
+                   COUNT(*) as total
+            FROM states s JOIN issues i ON i.state_id = s.id
+            GROUP BY s.id ORDER BY open_cnt DESC
+        ''')
+        open_rows = cursor.fetchall()
+        db.close()
+        top_open = [r for r in open_rows if r['open_cnt'] > 0][:8]
+        answer = 'States with the most open CMS quality issues:'
+        details = [
+            f"{r['name']}: {r['open_cnt']} open of {r['total']} total "
+            f"({round(r['open_cnt']/r['total']*100,1) if r['total'] else 0}% backlog)"
+            for r in top_open]
+        return jsonify({'answer': answer, 'details': details})
+
+    # ── INTENT: resolved / completed ─────────────────────────────────────────
+    if re.search(r'\b(resolved|done|completed|closed|finished)\b', q):
+        cursor.execute('''
+            SELECT s.name,
+                   SUM(CASE WHEN i.status = "done" THEN 1 ELSE 0 END) as done_cnt,
+                   COUNT(*) as total
+            FROM states s JOIN issues i ON i.state_id = s.id
+            GROUP BY s.id HAVING total > 0 ORDER BY done_cnt DESC
+        ''')
+        done_rows = cursor.fetchall()
+        db.close()
+        answer = 'States with the most resolved CMS quality issues:'
+        details = [
+            f"{r['name']}: {r['done_cnt']} resolved "
+            f"({round(r['done_cnt']/r['total']*100,1) if r['total'] else 0}% resolution rate)"
+            for r in done_rows[:8]]
+        return jsonify({'answer': answer, 'details': details})
+
+    # ── INTENT: compare / rank all types ─────────────────────────────────────
+    if re.search(r'\b(compare|rank|ranking|leaderboard|scorecard)\b', q):
+        cursor.execute('''
+            SELECT s.name,
+                   COUNT(*) as total,
+                   SUM(CASE WHEN i.status = "done" THEN 1 ELSE 0 END) as done_cnt,
+                   SUM(CASE WHEN i.status = "open" THEN 1 ELSE 0 END) as open_cnt,
+                   MAX(CASE WHEN i.title LIKE "%Q1 2026%" AND i.issue_type = "duplicate_claims"
+                       THEN i.metric_value END) as dup_rate
+            FROM states s JOIN issues i ON i.state_id = s.id
+            GROUP BY s.id HAVING total > 0
+            ORDER BY dup_rate ASC, done_cnt DESC
+        ''')
+        cmp_rows = cursor.fetchall()
+        db.close()
         answer = (
-            f'{matched_state}: {item["total"]} total issues, {item["successful"]} completed, '
-            f'{item["open"]} open, {item["cancelled"]} cancelled. '
-            f'Success rate {item["success_rate"]:.1f}%, composite score {item["composite_score"]:.1f}.'
+            f'CMS quality comparison across all 50 states — '
+            f'ranked by duplicate claim rate (Q1 2026), then by resolved issues.'
         )
         details = [
-            f'Backlog rate: {item["backlog_rate"]:.1f}%',
-            f'Cancellation rate: {item["cancel_rate"]:.1f}%',
-            f'Data confidence: {item["confidence"]:.1f}%'
-        ]
+            f"{r['name']}: dup rate {r['dup_rate'] or '–'}%, "
+            f"{r['done_cnt']} resolved / {r['total']} total"
+            for r in cmp_rows[:10]]
         return jsonify({'answer': answer, 'details': details})
 
-    if re.search(r'\b(best|top|leader)\b', q):
-        top = ranked[:5]
-        answer = 'Top states by composite quality score:'
-        details = [f"{r['state']}: score {r['composite_score']:.1f}, success {r['success_rate']:.1f}%" for r in top]
-        return jsonify({'answer': answer, 'details': details})
-
-    if re.search(r'\b(worst|bottom|lagging|lowest)\b', q):
-        bottom = sorted(eligible, key=lambda x: x.get('composite_score', 0))[:5]
-        answer = 'States needing the most improvement:'
-        details = [f"{r['state']}: score {r['composite_score']:.1f}, backlog {r['backlog_rate']:.1f}%, cancel {r['cancel_rate']:.1f}%" for r in bottom]
-        return jsonify({'answer': answer, 'details': details})
-
-    if re.search(r'\b(open|backlog)\b', q):
-        sorted_open = sorted(eligible, key=lambda x: x.get('open', 0), reverse=True)[:5]
-        answer = 'Highest open-issue backlog states:'
-        details = [f"{r['state']}: {r['open']} open ({r['backlog_rate']:.1f}% backlog)" for r in sorted_open]
-        return jsonify({'answer': answer, 'details': details})
-
-    if re.search(r'\b(compare)\b', q):
-        answer = f'Comparison summary for {matched_type or "all issue types"}: {len(eligible)} states with data.'
+    # ── INTENT: best / top states overall ────────────────────────────────────
+    if re.search(r'\b(best|top|leader|excellent|performing)\b', q):
+        cursor.execute('''
+            SELECT s.name,
+                   MAX(CASE WHEN i.title LIKE "%Q1 2026%" AND i.issue_type = "duplicate_claims"
+                       THEN i.metric_value END) as dup_rate,
+                   SUM(CASE WHEN i.status = "open" THEN 1 ELSE 0 END) as open_cnt,
+                   COUNT(*) as total
+            FROM states s JOIN issues i ON i.state_id = s.id
+            GROUP BY s.id HAVING dup_rate IS NOT NULL
+            ORDER BY dup_rate ASC
+        ''')
+        best_rows = cursor.fetchall()
+        db.close()
+        answer = 'Top-performing states by lowest duplicate claim rate (Q1 2026):'
         details = [
-            f"Best: {ranked[0]['state']} (score {ranked[0]['composite_score']:.1f})" if ranked else 'Best: N/A',
-            f"Median success rate: {sorted([r['success_rate'] for r in eligible])[len(eligible)//2]:.1f}%" if eligible else 'Median success rate: N/A'
-        ]
+            f"#{i+1} {r['name']}: {r['dup_rate']}% dup rate, {r['open_cnt']} open issues"
+            for i, r in enumerate(best_rows[:7])]
         return jsonify({'answer': answer, 'details': details})
 
-    # Default summary
-    if not ranked:
-        return jsonify({'answer': 'No issue data available for this question.', 'details': []})
+    # ── INTENT: worst / critical states ──────────────────────────────────────
+    if re.search(r'\b(worst|bottom|critical|lagging|failing|poor)\b', q):
+        cursor.execute('''
+            SELECT s.name,
+                   MAX(CASE WHEN i.title LIKE "%Q1 2026%" AND i.issue_type = "duplicate_claims"
+                       THEN i.metric_value END) as dup_rate,
+                   SUM(CASE WHEN i.status = "open" THEN 1 ELSE 0 END) as open_cnt,
+                   COUNT(*) as total
+            FROM states s JOIN issues i ON i.state_id = s.id
+            GROUP BY s.id HAVING dup_rate IS NOT NULL
+            ORDER BY dup_rate DESC
+        ''')
+        worst_rows = cursor.fetchall()
+        db.close()
+        answer = 'States needing the most CMS quality improvement (highest dup. claim rates):'
+        details = [
+            f"#{i+1} {r['name']}: {r['dup_rate']}% dup rate, {r['open_cnt']} open issues"
+            for i, r in enumerate(worst_rows[:7])]
+        return jsonify({'answer': answer, 'details': details})
 
-    avg_success = sum(r['success_rate'] for r in eligible) / len(eligible)
-    avg_score = sum(r['composite_score'] for r in eligible) / len(eligible)
-    answer = f'Quality snapshot for {matched_type or "all issue types"}: average success {avg_success:.1f}%, average composite score {avg_score:.1f}.'
+    # ── INTENT: quarter-specific ──────────────────────────────────────────────
+    if matched_quarter:
+        cursor.execute('''
+            SELECT s.name, i.issue_type,
+                   COUNT(*) as cnt,
+                   AVG(i.metric_value) as avg_metric
+            FROM issues i JOIN states s ON s.id = i.state_id
+            WHERE i.title LIKE ?
+            GROUP BY s.id, i.issue_type
+            ORDER BY avg_metric DESC
+        ''', (f'%{matched_quarter}%',))
+        q_rows = cursor.fetchall()
+        db.close()
+        if not q_rows:
+            return jsonify({'answer': f'No data found for {matched_quarter}.', 'details': []})
+        answer = f'{matched_quarter} reporting period — top claim quality issues by volume:'
+        seen = {}
+        details = []
+        for r in q_rows:
+            key = r['issue_type']
+            if key not in seen and r['avg_metric']:
+                seen[key] = True
+                details.append(
+                    f"{CMS_LABELS.get(key, key)}: avg {int(r['avg_metric']):,} cases across {r['cnt']} state records")
+            if len(details) >= 7:
+                break
+        return jsonify({'answer': answer, 'details': details})
+
+    # ── DEFAULT: overall CMS snapshot ────────────────────────────────────────
+    cursor.execute('''
+        SELECT SUM(CASE WHEN status = "open"      THEN 1 ELSE 0 END) as open_cnt,
+               SUM(CASE WHEN status = "done"      THEN 1 ELSE 0 END) as done_cnt,
+               SUM(CASE WHEN status = "cancelled" THEN 1 ELSE 0 END) as canc_cnt,
+               COUNT(*) as total
+        FROM issues
+    ''')
+    totals = dict(cursor.fetchone())
+    cursor.execute('''
+        SELECT AVG(CASE WHEN title LIKE "%Q1 2026%" AND issue_type = "duplicate_claims"
+                   THEN metric_value END) as avg_dup
+        FROM issues
+    ''')
+    avg_dup = cursor.fetchone()['avg_dup']
+    db.close()
+
+    total = totals['total'] or 1
+    answer = (
+        f'CMS Quality Overview — {total:,} total issues across all 50 states: '
+        f'{totals["done_cnt"]:,} resolved ({round(totals["done_cnt"]/total*100,1)}%), '
+        f'{totals["open_cnt"]:,} open ({round(totals["open_cnt"]/total*100,1)}%). '
+        f'National avg duplicate claim rate (Q1 2026): {round(avg_dup, 2) if avg_dup else "–"}%.'
+    )
     details = [
-        f"Top: {ranked[0]['state']} ({ranked[0]['composite_score']:.1f})",
-        f"Lowest: {ranked[-1]['state']} ({ranked[-1]['composite_score']:.1f})"
+        'Try asking: "duplicate claim rate by state"',
+        'Try asking: "worst states for invalid diagnosis code"',
+        'Try asking: "open issues in Texas"',
+        'Try asking: "compare Q1 2026"',
+        'Try asking: "best states for payment amount exceeded"',
     ]
     return jsonify({'answer': answer, 'details': details})
 
