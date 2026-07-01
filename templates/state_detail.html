@@ -16,6 +16,65 @@
         </div>
     </div>
 
+    <!-- CMS Executive Summary -->
+    <div class="row mb-4">
+        <div class="col-12">
+            <div class="card shadow-sm" style="border-left:5px solid #0d6efd;">
+                <div class="card-body p-4">
+                    <div class="d-flex justify-content-between align-items-start flex-wrap gap-3 mb-3">
+                        <div>
+                            <h5 class="card-title mb-1"><i class="bi bi-clipboard2-pulse"></i> CMS Quality Executive Summary</h5>
+                            <small class="text-muted">Q1 2026 Reporting Period &mdash; Lower values indicate better performance</small>
+                        </div>
+                        <div id="qualityGradeBadge" class="d-flex align-items-center justify-content-center fw-bold fs-3 rounded-circle text-white" style="width:56px;height:56px;min-width:56px;background:#adb5bd;">&ndash;</div>
+                    </div>
+                    <div class="row g-3 mb-3">
+                        <div class="col-6 col-md-3">
+                            <div class="text-center p-2 rounded bg-light border">
+                                <small class="text-muted d-block">Dup. Claims Rate</small>
+                                <div class="h5 mb-0 fw-bold" id="execDupRate">&ndash;</div>
+                            </div>
+                        </div>
+                        <div class="col-6 col-md-3">
+                            <div class="text-center p-2 rounded bg-light border">
+                                <small class="text-muted d-block">National Average</small>
+                                <div class="h5 mb-0" id="execNatAvg">&ndash;</div>
+                            </div>
+                        </div>
+                        <div class="col-6 col-md-3">
+                            <div class="text-center p-2 rounded bg-light border">
+                                <small class="text-muted d-block">Nat'l Rank (Dup.)</small>
+                                <div class="h5 mb-0" id="execDupRank">&ndash;</div>
+                            </div>
+                        </div>
+                        <div class="col-6 col-md-3">
+                            <div class="text-center p-2 rounded bg-light border">
+                                <small class="text-muted d-block">vs. National Avg</small>
+                                <div class="h5 mb-0 fw-bold" id="execVsNational">&ndash;</div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="table-responsive">
+                        <table class="table table-sm table-hover mb-0">
+                            <thead class="table-light">
+                                <tr>
+                                    <th>Issue Type</th>
+                                    <th class="text-center">Q1 2026 Value</th>
+                                    <th class="text-center">Open Issues</th>
+                                    <th class="text-center">Severity</th>
+                                    <th class="text-center">Nat'l Rank</th>
+                                </tr>
+                            </thead>
+                            <tbody id="execBreakdownBody">
+                                <tr><td colspan="5" class="text-center text-muted py-3">Loading...</td></tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
     <!-- Filter Buttons -->
     <div class="row mb-4">
         <div class="col-12">
@@ -80,12 +139,11 @@
                         </div>
                         <div class="col-md-6">
                             <label class="form-label">Issue Type</label>
-                            <input list="issue-types" name="issue_type" class="form-control" placeholder="e.g. housing, environment, transport">
-                            <datalist id="issue-types">
+                            <select name="issue_type" class="form-select">
                                 {% for item in issue_types %}
-                                <option value="{{ item }}"></option>
+                                <option value="{{ item }}">{{ item|replace('_', ' ')|title }}</option>
                                 {% endfor %}
-                            </datalist>
+                            </select>
                         </div>
                         <div class="col-md-6">
                             <label class="form-label">Description</label>
@@ -247,5 +305,71 @@
             .catch(() => { if (window.showToast) showToast('Update failed', 'danger'); });
         });
     });
+
+    // CMS Executive Summary
+    (function() {
+        var stateId = {{ state['id'] }};
+        var issueTypeLabels = {
+            duplicate_claims: 'Duplicate Claims Issue',
+            invalid_diagnosis_code: 'Invalid Diagnosis Code',
+            debit_credit_mismatch: 'Debit/Credit Not Matching',
+            null_recipient_values: 'Null Recipient Values',
+            improper_procedure_code: 'Improper Procedure Code Pop.',
+            referential_integrity: 'Referential Integrity Issue',
+            payment_amount_exceeded: 'Payment Amount Exceeded',
+            birth_date_error: 'Birth Date > Claim Date',
+            discharge_date_error: 'Discharge Date > Admission'
+        };
+        var gradeColors = {A:'#198754',B:'#0d6efd',C:'#e0a800',D:'#fd7e14',F:'#dc3545'};
+        fetch('/api/state-executive-summary/' + stateId)
+            .then(function(r){ return r.json(); })
+            .then(function(data) {
+                var dup = data.duplicate_claims || {};
+                var grade = data.quality_grade || '?';
+                var gradeEl = document.getElementById('qualityGradeBadge');
+                if (gradeEl) { gradeEl.textContent = grade; gradeEl.style.background = gradeColors[grade] || '#adb5bd'; if (grade==='C') gradeEl.style.color='#000'; }
+                function set(id,v){ var el=document.getElementById(id); if(el) el.textContent=v; }
+                set('execDupRate', dup.rate != null ? dup.rate + '%' : '–');
+                set('execNatAvg', dup.national_avg != null ? parseFloat(dup.national_avg).toFixed(1) + '%' : '–');
+                set('execDupRank', dup.rank ? '#' + dup.rank + ' of ' + dup.total_states : '–');
+                var vs = dup.vs_national || 0;
+                var vsEl = document.getElementById('execVsNational');
+                if (vsEl) { vsEl.textContent = (vs>0?'+':'') + parseFloat(vs).toFixed(2) + '%'; vsEl.style.color = vs>0?'#dc3545':'#198754'; }
+                var tbody = document.getElementById('execBreakdownBody');
+                var breakdown = data.type_breakdown || {};
+                var rankings = data.issue_type_rankings || {};
+                if (tbody) {
+                    var html = Object.keys(issueTypeLabels).map(function(type) {
+                        var d = breakdown[type] || {};
+                        var metric = d.current_metric;
+                        var openCount = d.open_count || 0;
+                        var rank = rankings[type];
+                        var valDisplay, severity, sevColor;
+                        if (type === 'duplicate_claims') {
+                            valDisplay = metric != null ? metric + '%' : '–';
+                            var rate = metric || 0;
+                            if (rate > 4) { severity='High'; sevColor='danger'; }
+                            else if (rate > 2) { severity='Moderate'; sevColor='warning'; }
+                            else { severity='Good'; sevColor='success'; }
+                        } else {
+                            valDisplay = metric != null ? parseInt(metric).toLocaleString() + ' cases' : '–';
+                            if (metric > 200) { severity='High'; sevColor='danger'; }
+                            else if (metric > 80) { severity='Moderate'; sevColor='warning'; }
+                            else { severity='Low'; sevColor='success'; }
+                        }
+                        return '<tr><td class="small">' + issueTypeLabels[type] + '</td>' +
+                            '<td class="text-center small">' + valDisplay + '</td>' +
+                            '<td class="text-center"><span class="badge bg-secondary">' + openCount + '</span></td>' +
+                            '<td class="text-center"><span class="badge bg-' + sevColor + '">' + severity + '</span></td>' +
+                            '<td class="text-center"><span class="badge bg-light text-dark border">' + (rank ? '#'+rank : '–') + '</span></td></tr>';
+                    }).join('');
+                    tbody.innerHTML = html;
+                }
+            })
+            .catch(function() {
+                var tbody = document.getElementById('execBreakdownBody');
+                if (tbody) tbody.innerHTML = '<tr><td colspan="5" class="text-center text-muted">Unable to load summary.</td></tr>';
+            });
+    })();
 </script>
 {% endblock %}

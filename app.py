@@ -20,10 +20,18 @@ ALL_STATES = [
     'Virginia', 'Washington', 'West Virginia', 'Wisconsin', 'Wyoming'
 ]
 
-ISSUE_TYPES = [
-    'infrastructure', 'education', 'environment', 'workforce', 'healthcare', 'emergency',
-    'commerce', 'technology', 'housing', 'public_safety', 'transportation', 'energy'
+CMS_ISSUE_TYPES = [
+    'duplicate_claims',
+    'invalid_diagnosis_code',
+    'debit_credit_mismatch',
+    'null_recipient_values',
+    'improper_procedure_code',
+    'referential_integrity',
+    'payment_amount_exceeded',
+    'birth_date_error',
+    'discharge_date_error'
 ]
+ISSUE_TYPES = CMS_ISSUE_TYPES  # backward compatibility
 
 STATE_ABBR = {
     'Alabama': 'AL', 'Alaska': 'AK', 'Arizona': 'AZ', 'Arkansas': 'AR', 'California': 'CA',
@@ -38,19 +46,85 @@ STATE_ABBR = {
     'Virginia': 'VA', 'Washington': 'WA', 'West Virginia': 'WV', 'Wisconsin': 'WI', 'Wyoming': 'WY'
 }
 
-ISSUE_TITLE_TEMPLATES = {
-    'infrastructure': ['Bridge Rehabilitation Program', 'Roadway Resurfacing Initiative', 'Water Main Modernization'],
-    'education': ['Teacher Retention Program', 'School Facility Modernization', 'Digital Learning Expansion'],
-    'environment': ['Air Quality Mitigation Plan', 'Watershed Protection Initiative', 'Recycling Capacity Expansion'],
-    'workforce': ['Skilled Trades Pipeline Program', 'Regional Apprenticeship Expansion', 'Career Mobility Initiative'],
-    'healthcare': ['Rural Clinic Access Improvement', 'Behavioral Health Capacity Plan', 'Preventive Care Expansion'],
-    'emergency': ['Emergency Response Readiness Upgrade', 'Disaster Recovery Preparedness', 'Early Warning System Expansion'],
-    'commerce': ['Small Business Growth Program', 'Main Street Revitalization', 'Regional Trade Competitiveness'],
-    'technology': ['Broadband Reliability Upgrade', 'Digital Services Modernization', 'Cyber Resilience Program'],
-    'housing': ['Affordable Housing Acceleration', 'Housing Stability Initiative', 'Neighborhood Revitalization Program'],
-    'public_safety': ['Community Safety Improvement Plan', 'Violence Prevention Partnership', 'Crisis Response Modernization'],
-    'transportation': ['Transit Reliability Enhancement', 'Intermodal Freight Optimization', 'Active Mobility Corridor Project'],
-    'energy': ['Grid Resilience Upgrade', 'Clean Energy Transition Program', 'Building Efficiency Initiative']
+CMS_ISSUE_TITLES = {
+    'duplicate_claims': 'Duplicate Claims Issue',
+    'invalid_diagnosis_code': 'Invalid Diagnosis Code',
+    'debit_credit_mismatch': 'Debit/Credit Not Matching',
+    'null_recipient_values': 'Null Recipient Values',
+    'improper_procedure_code': 'Improper Population of Value in Procedure Code Column',
+    'referential_integrity': 'Referential Integrity Issue',
+    'payment_amount_exceeded': 'Claim Payment Amount Exceeds Max for Type of Service',
+    'birth_date_error': 'Birth Date Greater Than Claim Date of Service',
+    'discharge_date_error': 'Discharge Date Greater Than Claim Admission Date'
+}
+
+# Duplicate claim rate (%) per state, ordered to match ALL_STATES alphabetical order
+DUP_CLAIM_RATES = [
+    1.2, 3.4, 0.8, 5.1, 2.3, 4.7, 1.9, 6.2, 0.5, 3.8,
+    2.1, 4.3, 1.5, 7.2, 2.8, 3.1, 0.9, 5.5, 1.7, 4.1,
+    2.6, 3.9, 1.1, 6.8, 2.4, 0.7, 3.6, 2.9, 4.8, 1.3,
+    5.9, 2.2, 1.6, 3.3, 0.6, 4.5, 2.7, 1.8, 5.3, 3.7,
+    2.0, 6.1, 1.4, 4.2, 0.4, 3.5, 2.5, 7.8, 1.0, 4.9
+]
+
+# Base instance count per quarter for each non-duplicate issue type
+CMS_BASE_COUNTS = {
+    'invalid_diagnosis_code': 145,
+    'debit_credit_mismatch': 12,
+    'null_recipient_values': 78,
+    'improper_procedure_code': 234,
+    'referential_integrity': 34,
+    'payment_amount_exceeded': 23,
+    'birth_date_error': 5,
+    'discharge_date_error': 8
+}
+
+CMS_ISSUE_DESCRIPTIONS = {
+    'duplicate_claims': [
+        'Duplicate claim submissions detected in current period. Exact duplicates with matching NPI, service date, procedure code, and billed amount found across claims batch.',
+        'Near-duplicate claims identified where minor field variations mask resubmissions. Member ID, DOS, and procedure code match across multiple claim IDs.',
+        'Prior authorization duplicates found; same service authorized and billed under distinct claim IDs within the same benefit period.'
+    ],
+    'invalid_diagnosis_code': [
+        'ICD-10-CM codes submitted that are not valid for the date of service. Codes are retired or do not exist in the applicable code set version.',
+        'Diagnosis codes missing required 4th, 5th, or 6th character specificity per ICD-10-CM official guidelines for the billed service.',
+        'Principal diagnosis code sequenced as a manifestation code, which cannot be listed first per ICD-10-CM coding conventions.'
+    ],
+    'debit_credit_mismatch': [
+        'Remittance advice shows debit and credit totals that do not reconcile with paid claim amounts in the system of record.',
+        'Encounter data financial crosswalk shows discrepancy between capitation payments and adjudicated claim values for the period.',
+        'Monthly financial reconciliation identified net balance discrepancy between claim payment ledger and treasury disbursement records.'
+    ],
+    'null_recipient_values': [
+        'Medicaid ID field is null or blank on submitted claims, preventing member attribution and eligibility validation.',
+        'Recipient date of birth and gender fields contain null values, blocking downstream clinical quality measure attribution.',
+        'Member enrollment segment contains null values in required demographic fields, causing eligibility verification failures.'
+    ],
+    'improper_procedure_code': [
+        'Procedure code column populated with revenue codes instead of HCPCS/CPT codes, causing systematic claim adjudication failures.',
+        'Type of Bill code used in place of procedure code on professional claims, resulting in systematic processing errors.',
+        'Procedure modifier applied in the procedure code field rather than the designated modifier field, causing pricing calculation errors.'
+    ],
+    'referential_integrity': [
+        'Claim header references a provider NPI that does not exist in the provider enrollment file, violating referential constraints.',
+        'Member ID on claim does not match any active enrollment record, indicating breakdown between claims and eligibility systems.',
+        'Rendering provider taxonomy code does not correspond to a valid taxonomy in the reference table, blocking credentialing validation.'
+    ],
+    'payment_amount_exceeded': [
+        'Claim payment amount exceeds the established fee schedule maximum allowable for the billed procedure and place of service.',
+        'Inpatient DRG payment calculation resulted in an amount exceeding the outlier threshold, requiring additional clinical review.',
+        'Bundled payment for episode of care surpasses the benchmark rate set for the applicable service category and region.'
+    ],
+    'birth_date_error': [
+        'Member date of birth on claim is recorded as a date after the claim date of service, indicating a data entry or system error.',
+        'Newborn claims contain birth date that post-dates the delivery admission date of service in the ADT feed.',
+        'Eligibility file shows member birth date greater than the earliest claim date in history, creating an impossible chronological sequence.'
+    ],
+    'discharge_date_error': [
+        'Inpatient claim discharge date precedes the admission date, indicating a systemic date reversal error in the ADT feed.',
+        'Long-term care claims show discharge date earlier than the admission date on the claim header record.',
+        'UB-04 inpatient claims submitted with statement-from and statement-through dates transposed, resulting in negative length of stay.'
+    ]
 }
 
 def get_db():
@@ -91,6 +165,7 @@ def init_db():
             status TEXT DEFAULT 'open',
             priority TEXT DEFAULT 'medium',
             issue_type TEXT DEFAULT 'general',
+            metric_value REAL DEFAULT NULL,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             FOREIGN KEY (state_id) REFERENCES states(id)
@@ -119,6 +194,8 @@ def init_db():
     issue_columns = [row[1] for row in cursor.fetchall()]
     if 'issue_type' not in issue_columns:
         cursor.execute("ALTER TABLE issues ADD COLUMN issue_type TEXT DEFAULT 'general'")
+    if 'metric_value' not in issue_columns:
+        cursor.execute('ALTER TABLE issues ADD COLUMN metric_value REAL DEFAULT NULL')
 
     # Ensure all states and tags exist
     for state in ALL_STATES:
@@ -1199,6 +1276,131 @@ def export_issues_csv():
     resp.headers['Content-Type'] = 'text/csv'
     resp.headers['Content-Disposition'] = 'attachment; filename=state_issues_export.csv'
     return resp
+
+
+@app.route('/api/state-executive-summary/<int:state_id>')
+def state_executive_summary(state_id):
+    """Return CMS quality executive summary for a single state"""
+    db = get_db()
+    cursor = db.cursor()
+
+    cursor.execute('SELECT * FROM states WHERE id = ?', (state_id,))
+    state_row = cursor.fetchone()
+    if not state_row:
+        db.close()
+        return jsonify({'error': 'State not found'}), 404
+
+    # Metrics by issue type for this state
+    cursor.execute('''
+        SELECT issue_type,
+               COUNT(*) as total,
+               SUM(CASE WHEN status = 'open' THEN 1 ELSE 0 END) as open_count,
+               SUM(CASE WHEN status = 'done' THEN 1 ELSE 0 END) as done_count,
+               MAX(CASE WHEN title LIKE '% Q1 2026%' THEN metric_value ELSE NULL END) as current_metric
+        FROM issues
+        WHERE state_id = ?
+        GROUP BY issue_type
+    ''', (state_id,))
+    type_data = {row['issue_type']: dict(row) for row in cursor.fetchall()}
+
+    # Nationwide dup claim rates for ranking (lower = better)
+    cursor.execute('''
+        SELECT s.id as state_id,
+               MAX(CASE WHEN i.title LIKE '% Q1 2026%' AND i.issue_type = 'duplicate_claims'
+                        THEN i.metric_value END) as dup_rate
+        FROM states s
+        JOIN issues i ON i.state_id = s.id
+        WHERE i.issue_type = 'duplicate_claims'
+        GROUP BY s.id
+        HAVING dup_rate IS NOT NULL
+        ORDER BY dup_rate ASC
+    ''')
+    all_dup_rows = cursor.fetchall()
+    national_avg_dup = sum(r['dup_rate'] for r in all_dup_rows) / max(len(all_dup_rows), 1)
+    state_dup_rate = (type_data.get('duplicate_claims') or {}).get('current_metric') or 0
+    dup_rank = next((i + 1 for i, r in enumerate(all_dup_rows) if r['state_id'] == state_id), None)
+
+    # Per-issue-type nationwide ranks
+    issue_type_rankings = {}
+    for issue_type in CMS_ISSUE_TYPES:
+        if issue_type == 'duplicate_claims':
+            issue_type_rankings[issue_type] = dup_rank
+            continue
+        cursor.execute('''
+            SELECT s.id,
+                   MAX(CASE WHEN i.title LIKE '% Q1 2026%' THEN i.metric_value END) as cur
+            FROM states s
+            JOIN issues i ON i.state_id = s.id
+            WHERE i.issue_type = ?
+            GROUP BY s.id
+            HAVING cur IS NOT NULL
+            ORDER BY cur ASC
+        ''', (issue_type,))
+        ranked = cursor.fetchall()
+        issue_type_rankings[issue_type] = next((i + 1 for i, r in enumerate(ranked) if r['id'] == state_id), None)
+
+    # Quality grade
+    high_open = sum(1 for t, d in type_data.items() if (d.get('open_count') or 0) > 0 and t != 'duplicate_claims')
+    if state_dup_rate < 1.5 and high_open <= 2:
+        grade = 'A'
+    elif state_dup_rate < 3.0 and high_open <= 5:
+        grade = 'B'
+    elif state_dup_rate < 5.0:
+        grade = 'C'
+    elif state_dup_rate < 6.5:
+        grade = 'D'
+    else:
+        grade = 'F'
+
+    db.close()
+    return jsonify({
+        'state': dict(state_row),
+        'type_breakdown': type_data,
+        'duplicate_claims': {
+            'rate': round(state_dup_rate, 2),
+            'national_avg': round(national_avg_dup, 2),
+            'rank': dup_rank,
+            'total_states': len(all_dup_rows),
+            'vs_national': round(state_dup_rate - national_avg_dup, 2)
+        },
+        'issue_type_rankings': issue_type_rankings,
+        'quality_grade': grade
+    })
+
+
+@app.route('/api/nationwide-rankings')
+def nationwide_rankings():
+    """Return nationwide CMS quality rankings by issue type"""
+    db = get_db()
+    cursor = db.cursor()
+
+    rankings = {}
+    for issue_type in CMS_ISSUE_TYPES:
+        cursor.execute('''
+            SELECT s.id, s.name,
+                   MAX(CASE WHEN i.title LIKE '% Q1 2026%' THEN i.metric_value END) as current_metric,
+                   SUM(CASE WHEN i.status = 'open' THEN 1 ELSE 0 END) as open_issues
+            FROM states s
+            JOIN issues i ON i.state_id = s.id
+            WHERE i.issue_type = ?
+            GROUP BY s.id
+            HAVING current_metric IS NOT NULL
+            ORDER BY current_metric ASC
+        ''', (issue_type,))
+        rows = cursor.fetchall()
+        rankings[issue_type] = [
+            {'rank': i + 1, 'state_id': r['id'], 'state': r['name'],
+             'metric': r['current_metric'], 'open_issues': r['open_issues']}
+            for i, r in enumerate(rows)
+        ]
+
+    db.close()
+    return jsonify({
+        'rankings': rankings,
+        'duplicate_claims_ranking': rankings.get('duplicate_claims', []),
+        'issue_types': CMS_ISSUE_TYPES,
+        'issue_type_labels': CMS_ISSUE_TITLES
+    })
 
 
 # Ensure schema/data are initialized for both local run and WSGI (gunicorn/Render)

@@ -79,6 +79,44 @@
             </div>
         </div>
     </div>
+
+    <div class="card shadow-sm mt-4">
+        <div class="card-body">
+            <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-3">
+                <h5 class="card-title mb-0"><i class="bi bi-table"></i> Nationwide CMS Quality Rankings</h5>
+                <span class="text-muted small">Lower values = better performance. Q1 2026 reporting period.</span>
+            </div>
+            <div class="mb-3">
+                <select id="rankingIssueTypeSelect" class="form-select w-auto d-inline-block">
+                    <option value="duplicate_claims">Duplicate Claims Rate (%)</option>
+                    <option value="invalid_diagnosis_code">Invalid Diagnosis Code</option>
+                    <option value="debit_credit_mismatch">Debit/Credit Not Matching</option>
+                    <option value="null_recipient_values">Null Recipient Values</option>
+                    <option value="improper_procedure_code">Improper Procedure Code</option>
+                    <option value="referential_integrity">Referential Integrity Issue</option>
+                    <option value="payment_amount_exceeded">Payment Amount Exceeded</option>
+                    <option value="birth_date_error">Birth Date Error</option>
+                    <option value="discharge_date_error">Discharge Date Error</option>
+                </select>
+            </div>
+            <div class="table-responsive">
+                <table class="table table-hover table-sm">
+                    <thead class="table-light">
+                        <tr>
+                            <th>Rank</th>
+                            <th>State</th>
+                            <th class="text-center">Q1 2026 Value</th>
+                            <th class="text-center">Open Issues</th>
+                            <th class="text-center">Performance</th>
+                        </tr>
+                    </thead>
+                    <tbody id="nationwideRankingsBody">
+                        <tr><td colspan="5" class="text-center text-muted">Loading...</td></tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
 </div>
 {% endblock %}
 
@@ -190,5 +228,43 @@ document.getElementById('copySummaryBtn').addEventListener('click', async functi
 });
 
 renderBrief(currentBrief);
+
+// Nationwide CMS Rankings
+var nationwideData = null;
+function renderNationwideRankings(issueType) {
+    if (!nationwideData) return;
+    var rows = nationwideData.rankings[issueType] || [];
+    var isDup = issueType === 'duplicate_claims';
+    var total = rows.length;
+    var tbody = document.getElementById('nationwideRankingsBody');
+    if (!rows.length) { tbody.innerHTML = '<tr><td colspan="5" class="text-center text-muted">No data.</td></tr>'; return; }
+    tbody.innerHTML = rows.map(function(row) {
+        var metric = row.metric;
+        var display = isDup ? parseFloat(metric).toFixed(2) + '%' : (metric != null ? parseInt(metric).toLocaleString() + ' cases' : '–');
+        var pct = row.rank / total;
+        var perf, color;
+        if (pct <= 0.25) { perf='Top 25%'; color='success'; }
+        else if (pct <= 0.5) { perf='Above Avg'; color='primary'; }
+        else if (pct <= 0.75) { perf='Below Avg'; color='warning'; }
+        else { perf='Bottom 25%'; color='danger'; }
+        return '<tr><td><strong>#' + row.rank + '</strong></td>' +
+            '<td><a href="/state/' + row.state_id + '" class="text-decoration-none">' + row.state + '</a></td>' +
+            '<td class="text-center">' + display + '</td>' +
+            '<td class="text-center"><span class="badge bg-secondary">' + (row.open_issues || 0) + '</span></td>' +
+            '<td class="text-center"><span class="badge bg-' + color + '">' + perf + '</span></td></tr>';
+    }).join('');
+}
+document.getElementById('rankingIssueTypeSelect').addEventListener('change', function() {
+    renderNationwideRankings(this.value);
+});
+fetch('/api/nationwide-rankings')
+    .then(function(r){ return r.json(); })
+    .then(function(data) {
+        nationwideData = data;
+        renderNationwideRankings(document.getElementById('rankingIssueTypeSelect').value);
+    })
+    .catch(function() {
+        document.getElementById('nationwideRankingsBody').innerHTML = '<tr><td colspan="5" class="text-danger text-center">Unable to load rankings.</td></tr>';
+    });
 </script>
 {% endblock %}
