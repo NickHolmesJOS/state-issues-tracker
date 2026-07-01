@@ -166,6 +166,8 @@ def init_db():
             priority TEXT DEFAULT 'medium',
             issue_type TEXT DEFAULT 'general',
             metric_value REAL DEFAULT NULL,
+            start_date TEXT DEFAULT NULL,
+            end_date TEXT DEFAULT NULL,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             FOREIGN KEY (state_id) REFERENCES states(id)
@@ -196,6 +198,10 @@ def init_db():
         cursor.execute("ALTER TABLE issues ADD COLUMN issue_type TEXT DEFAULT 'general'")
     if 'metric_value' not in issue_columns:
         cursor.execute('ALTER TABLE issues ADD COLUMN metric_value REAL DEFAULT NULL')
+    if 'start_date' not in issue_columns:
+        cursor.execute('ALTER TABLE issues ADD COLUMN start_date TEXT DEFAULT NULL')
+    if 'end_date' not in issue_columns:
+        cursor.execute('ALTER TABLE issues ADD COLUMN end_date TEXT DEFAULT NULL')
 
     # Ensure all states and tags exist
     for state in ALL_STATES:
@@ -207,176 +213,157 @@ def init_db():
 
     db.commit()
 
-    # CMS reseed: wipe old data and seed fresh highly-varied CMS quality data
+    # ── CMS Variance Seeding ──────────────────────────────────────────────────
+    # 5 quality tiers derived from DUP_CLAIM_RATES (0=excellent → 4=critical)
+    STATE_PROFILES = [
+        0, 2, 0, 3, 1, 3, 1, 4, 0, 2,  # AL AK AZ AR CA CO CT DE FL GA
+        1, 3, 0, 4, 1, 2, 0, 3, 1, 2,  # HI ID IL IN IA KS KY LA ME MD
+        1, 2, 0, 4, 1, 0, 2, 1, 3, 0,  # MA MI MN MS MO MT NE NV NH NJ
+        3, 1, 1, 2, 0, 3, 1, 1, 3, 2,  # NM NY NC ND OH OK OR PA RI SC
+        1, 4, 0, 2, 0, 2, 1, 4, 0, 3   # SD TN TX UT VT VA WA WV WI WY
+    ]
+    # Target total issues per profile (excellent → critical) before per-state ±40%
+    PROFILE_TOTALS = [18, 40, 66, 96, 142]
+    # Status distributions per tier: (open_frac, done_frac, cancelled_frac)
+    PROFILE_STATUS_DIST = [
+        (0.10, 0.82, 0.08),  # 0 excellent – mostly done
+        (0.20, 0.70, 0.10),  # 1 good
+        (0.40, 0.45, 0.15),  # 2 average
+        (0.62, 0.26, 0.12),  # 3 poor
+        (0.76, 0.14, 0.10),  # 4 critical – mostly open
+    ]
+    NON_DUP_TYPES = [t for t in CMS_ISSUE_TYPES if t != 'duplicate_claims']
+    from datetime import date as _date, timedelta as _td
+    QUARTERS = [
+        ('Q2 2025', _date(2025, 4, 1),  91),
+        ('Q3 2025', _date(2025, 7, 1),  92),
+        ('Q4 2025', _date(2025, 10, 1), 92),
+        ('Q1 2026', _date(2026, 1, 1),  90),
+    ]
+
+    def _h(a, b=0, c=0):
+        """Deterministic hash 0-99"""
+        return (a * 37 + b * 23 + c * 13 + a * b + b * c + 1) % 100
+
     cursor.execute("SELECT COUNT(*) FROM issues WHERE issue_type = 'duplicate_claims'")
-    if cursor.fetchone()[0] == 0:
-        cursor.execute("DELETE FROM issue_tags")
-        cursor.execute("DELETE FROM issues")
-        cursor.execute("SELECT id, name FROM states ORDER BY name")
+    cms_seeded = cursor.fetchone()[0] > 0
+
+    if not cms_seeded:
+        cursor.execute('DELETE FROM issue_tags')
+        cursor.execute('DELETE FROM issues')
+        cursor.execute('SELECT id, name FROM states ORDER BY name')
         state_rows = cursor.fetchall()
-        cursor.execute("SELECT id, name FROM tags ORDER BY id")
-        tag_lookup = {row["name"]: row["id"] for row in cursor.fetchall()}
+        cursor.execute('SELECT id, name FROM tags ORDER BY id')
+        tag_rows = cursor.fetchall()
+        tag_lookup = {row['name']: row['id'] for row in tag_rows}
 
-        # Per-state quality profiles (0=excellent, 1=good, 2=average, 3=poor, 4=critical)
-        # Assigned across 50 states to create realistic spread
-        STATE_PROFILES = [
-            4, 1, 0, 3, 2, 1, 0, 4, 0, 3,   # AL AK AZ AR CA CO CT DE FL GA
-            1, 2, 3, 4, 0, 2, 1, 3, 0, 2,   # HI ID IL IN IA KS KY LA ME MD
-            0, 3, 1, 4, 2, 0, 3, 2, 1, 4,   # MA MI MN MS MO MT NE NV NH NJ
-            3, 0, 1, 2, 4, 1, 3, 0, 2, 4,   # NM NY NC ND OH OK OR PA RI SC
-            0, 3, 4, 1, 2, 0, 3, 4, 1, 2,   # SD TN TX UT VT VA WA WV WI WY
-        ]
+        for state_idx, state_row in enumerate(state_rows):
+            state_id   = state_row['id']
+            state_name = state_row['name']
+            profile    = STATE_PROFILES[state_idx]
+            dup_rate   = DUP_CLAIM_RATES[state_idx]
 
-        # Per-issue-type scale multiplier per state (50 states x 8 non-dup types)
-        # Varies each state independently so no two states look alike
-        TYPE_MULTIPLIERS = [
-            [1.8,0.4,2.1,0.6,3.2,0.3,1.1,0.7],  # AL
-            [0.5,1.7,0.8,2.4,0.6,1.3,0.4,2.1],  # AK
-            [0.2,0.3,0.5,0.4,0.3,0.2,0.1,0.2],  # AZ - excellent
-            [2.9,1.2,3.4,2.1,4.1,1.8,2.3,3.0],  # AR - poor
-            [0.9,2.2,1.1,3.5,0.7,2.8,0.5,1.9],  # CA
-            [0.6,0.9,0.7,1.2,0.5,0.8,0.3,0.6],  # CO - good
-            [0.3,0.4,0.4,0.5,0.3,0.3,0.2,0.3],  # CT - excellent
-            [3.1,2.4,4.2,3.8,5.0,2.9,3.3,4.1],  # DE - critical
-            [0.2,0.2,0.3,0.4,0.2,0.2,0.1,0.2],  # FL - excellent
-            [2.4,1.8,2.9,2.3,3.6,1.5,2.0,2.7],  # GA - poor
-            [0.7,1.4,0.9,2.1,0.6,1.2,0.5,1.0],  # HI
-            [1.2,1.0,1.4,1.1,1.6,0.9,1.0,1.3],  # ID
-            [2.1,1.6,2.8,2.0,3.3,1.4,1.9,2.4],  # IL - poor
-            [3.4,2.8,4.5,3.9,5.2,3.1,3.6,4.4],  # IN - critical
-            [0.3,0.4,0.4,0.6,0.3,0.3,0.2,0.3],  # IA - excellent
-            [1.1,1.3,1.3,1.5,1.2,1.0,0.8,1.2],  # KS
-            [0.8,0.7,0.9,0.8,1.0,0.6,0.7,0.8],  # KY - good
-            [2.6,1.9,3.2,2.5,3.8,1.7,2.2,2.9],  # LA - poor
-            [0.3,0.3,0.4,0.5,0.2,0.2,0.2,0.3],  # ME - excellent
-            [1.0,1.2,1.2,1.4,1.0,0.9,0.7,1.1],  # MD
-            [0.2,0.3,0.3,0.4,0.2,0.2,0.1,0.2],  # MA - excellent
-            [2.2,1.7,2.7,2.1,3.2,1.4,1.8,2.5],  # MI - poor
-            [0.7,0.8,0.9,1.0,0.8,0.6,0.5,0.7],  # MN - good
-            [3.6,3.0,4.8,4.1,5.5,3.3,3.8,4.7],  # MS - critical
-            [1.3,1.1,1.5,1.2,1.7,0.9,1.1,1.4],  # MO
-            [0.3,0.3,0.4,0.5,0.3,0.2,0.2,0.3],  # MT - excellent
-            [2.3,1.7,2.9,2.3,3.4,1.5,1.9,2.6],  # NE - poor
-            [1.4,1.2,1.6,1.3,1.8,1.0,1.2,1.5],  # NV
-            [0.6,0.8,0.8,1.0,0.6,0.6,0.4,0.7],  # NH - good
-            [3.8,3.2,5.0,4.3,5.8,3.5,4.0,4.9],  # NJ - critical
-            [2.5,1.9,3.1,2.5,3.7,1.7,2.1,2.8],  # NM - poor
-            [0.3,0.3,0.4,0.5,0.3,0.2,0.2,0.3],  # NY - excellent
-            [1.0,1.1,1.2,1.3,1.1,0.8,0.7,1.0],  # NC
-            [2.0,1.5,2.5,1.9,3.0,1.3,1.6,2.2],  # ND
-            [4.1,3.5,5.4,4.7,6.2,3.9,4.4,5.3],  # OH - critical
-            [0.7,0.9,0.9,1.1,0.7,0.7,0.5,0.8],  # OK - good
-            [2.7,2.1,3.3,2.7,3.9,1.8,2.3,3.0],  # OR - poor
-            [0.3,0.4,0.4,0.5,0.3,0.2,0.2,0.3],  # PA - excellent
-            [1.5,1.3,1.7,1.4,1.9,1.1,1.3,1.6],  # RI
-            [4.3,3.7,5.6,4.9,6.5,4.1,4.6,5.5],  # SC - critical
-            [0.3,0.3,0.4,0.4,0.3,0.2,0.2,0.3],  # SD - excellent
-            [2.4,1.8,3.0,2.4,3.5,1.6,2.0,2.7],  # TN - poor
-            [4.5,3.9,5.8,5.1,6.8,4.3,4.8,5.7],  # TX - critical
-            [0.7,0.8,0.9,1.0,0.7,0.6,0.5,0.7],  # UT - good
-            [1.2,1.0,1.4,1.1,1.5,0.8,1.0,1.2],  # VT
-            [0.3,0.3,0.4,0.5,0.3,0.2,0.2,0.3],  # VA - excellent
-            [2.9,2.3,3.6,3.0,4.3,2.1,2.6,3.3],  # WA - poor
-            [4.7,4.1,6.0,5.3,7.0,4.5,5.0,5.9],  # WV - critical
-            [0.8,0.9,1.0,1.1,0.9,0.7,0.6,0.9],  # WI - good
-            [1.6,1.4,1.8,1.5,2.0,1.2,1.4,1.7],  # WY
-        ]
+            # Per-state total with ±40% deterministic variance
+            base_total   = PROFILE_TOTALS[profile]
+            var_frac     = (_h(state_idx, 7) - 50) / 100.0  # -0.50 to +0.49
+            total_issues = max(10, int(round(base_total * (1 + var_frac * 0.4))))
+            # Reserve one issue per quarter for duplicate_claims
+            non_dup_total = max(8, total_issues - len(QUARTERS))
 
-        # Profile-based open/done/cancelled distributions
-        PROFILE_STATUS = {
-            0: ["done","done","done","done","open"],           # excellent: 80% done
-            1: ["done","done","done","open","open"],           # good: 60% done
-            2: ["done","done","open","open","open"],           # average: 40% done
-            3: ["done","open","open","open","cancelled"],      # poor: 20% done
-            4: ["open","open","open","cancelled","cancelled"], # critical: 0% done
-        }
+            # Per-type weights for non-dup types (deterministic per state)
+            weights = [0.5 + _h(state_idx, ti, 3) / 100.0 * 3.0 for ti in range(len(NON_DUP_TYPES))]
+            total_w = sum(weights)
+            type_counts = [max(1, round(w / total_w * non_dup_total)) for w in weights]
+            # Correct rounding drift
+            diff = non_dup_total - sum(type_counts)
+            for i in range(abs(diff)):
+                idx_adj = i % len(type_counts)
+                type_counts[idx_adj] += (1 if diff > 0 else (-1 if type_counts[idx_adj] > 1 else 0))
 
-        periods = [
-            ("Q1 2026", "2026-03-15 00:00:00", True),
-            ("Q4 2025", "2025-12-15 00:00:00", False),
-            ("Q3 2025", "2025-09-15 00:00:00", False),
-            ("Q2 2025", "2025-06-15 00:00:00", False),
-        ]
+            open_p, done_p, canc_p = PROFILE_STATUS_DIST[profile]
 
-        non_dup_types = [t for t in CMS_ISSUE_TYPES if t != "duplicate_claims"]
+            # ── duplicate_claims: one issue per reporting quarter ─────────
+            for qi, (qlabel, qstart, qlen) in enumerate(QUARTERS):
+                sd_off = _h(state_idx, qi) % min(20, qlen // 4)
+                sd = qstart + _td(days=sd_off)
+                # Most recent quarter stays open; prior quarters are resolved
+                status = 'open' if qi == len(QUARTERS) - 1 else 'done'
+                if status == 'done':
+                    work_days = 20 + _h(state_idx, qi, 1) % 40
+                    ed = sd + _td(days=work_days)
+                else:
+                    ed = None
+                metric = round(dup_rate + (_h(state_idx, qi, 2) - 50) / 500.0, 2)
+                metric = max(0.1, min(9.9, metric))
+                title  = state_name + ' – ' + CMS_ISSUE_TITLES['duplicate_claims'] + ' (' + qlabel + ')'
+                desc   = CMS_ISSUE_DESCRIPTIONS['duplicate_claims'][(qi + state_idx) % 3]
+                prio   = 'high' if dup_rate > 4.0 else 'medium'
+                cursor.execute(
+                    'INSERT INTO issues '
+                    '(state_id, title, description, status, priority, issue_type, '
+                    'metric_value, start_date, end_date) '
+                    'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+                    (state_id, title, desc, status, prio, 'duplicate_claims', metric,
+                     sd.strftime('%Y-%m-%d'), ed.strftime('%Y-%m-%d') if ed else None))
+                iid = cursor.lastrowid
+                for tname in (['completed', 'will probably benefit']
+                               if status == 'done' else
+                               ['needs improvement', 'in progress', 'urgent']):
+                    tid = tag_lookup.get(tname)
+                    if tid:
+                        cursor.execute('INSERT OR IGNORE INTO issue_tags VALUES (?, ?)', (iid, tid))
 
-        for state_idx, state in enumerate(state_rows):
-            dup_rate = DUP_CLAIM_RATES[state_idx % len(DUP_CLAIM_RATES)]
-            profile = STATE_PROFILES[state_idx % len(STATE_PROFILES)]
-            type_mults = TYPE_MULTIPLIERS[state_idx % len(TYPE_MULTIPLIERS)]
-            status_pool = PROFILE_STATUS[profile]
-
-            for period_idx, (period_label, created_at, is_current) in enumerate(periods):
-                for type_idx, issue_type in enumerate(CMS_ISSUE_TYPES):
-                    desc_idx = (period_idx + type_idx + state_idx) % 3
-
-                    if issue_type == "duplicate_claims":
-                        trend_delta = [0, 0.3, 0.6, 0.9][period_idx]
-                        direction = 1 if state_idx % 2 == 0 else -0.5
-                        metric_value = round(max(0.1, dup_rate + trend_delta * direction), 2)
-                        if is_current:
-                            if profile >= 3:
-                                status, priority = "open", "high"
-                            elif profile == 2:
-                                status, priority = "open", "medium"
-                            elif profile == 1:
-                                status, priority = "open", "low"
-                            else:
-                                status, priority = "open", "low"
-                        else:
-                            status, priority = "done", "medium"
-                        description = (
-                            "[" + period_label + "] " + CMS_ISSUE_DESCRIPTIONS["duplicate_claims"][desc_idx] +
-                            " Current duplicate claim rate: " + str(metric_value) + "% of total submissions."
-                        )
+            # ── non-duplicate issue types ─────────────────────────────────
+            for ti, issue_type in enumerate(NON_DUP_TYPES):
+                n = type_counts[ti]
+                for k in range(n):
+                    qi = _h(state_idx, ti, k + 5) % len(QUARTERS)
+                    qlabel, qstart, qlen = QUARTERS[qi]
+                    label = CMS_ISSUE_TITLES[issue_type]
+                    title = (state_name + ' – ' + label + ' (' + qlabel + ')'
+                             if n <= 1 else
+                             state_name + ' – ' + label + ' #' + str(k + 1) + ' (' + qlabel + ')')
+                    desc = CMS_ISSUE_DESCRIPTIONS[issue_type][(ti + k + state_idx) % 3]
+                    base_m = CMS_BASE_COUNTS[issue_type]
+                    factor = 0.25 + _h(state_idx, ti, k + 1) / 100.0 * 2.75
+                    metric_val = round(base_m * factor)
+                    rnd = _h(state_idx, ti * 100 + k + 9) % 100
+                    if rnd < int(done_p * 100):
+                        status = 'done'
+                    elif rnd < int((done_p + canc_p) * 100):
+                        status = 'cancelled'
                     else:
-                        non_dup_idx = non_dup_types.index(issue_type)
-                        base = CMS_BASE_COUNTS.get(issue_type, 50)
-                        multiplier = type_mults[non_dup_idx]
-                        period_factor = [1.0, 0.85, 1.15, 0.92][period_idx]
-                        metric_value = max(1, round(base * multiplier * period_factor))
-
-                        # Status varies by profile and period
-                        if not is_current:
-                            status, priority = "done", "medium"
-                        else:
-                            pool_idx = (type_idx + state_idx) % len(status_pool)
-                            status = status_pool[pool_idx]
-                            if profile >= 4 or metric_value > 300:
-                                priority = "high"
-                            elif profile >= 2 or metric_value > 100:
-                                priority = "medium"
-                            else:
-                                priority = "low"
-
-                        description = (
-                            "[" + period_label + "] " + CMS_ISSUE_DESCRIPTIONS[issue_type][desc_idx] +
-                            " Instance count: " + str(metric_value) + " occurrences identified in claims data."
-                        )
-
-                    title = CMS_ISSUE_TITLES[issue_type] + " - " + period_label
+                        status = 'open'
+                    priority = ['low', 'medium', 'high', 'medium', 'high'][_h(state_idx, ti, k + 2) % 5]
+                    sd_off = _h(state_idx, ti, k + 3) % min(40, qlen // 2)
+                    sd = qstart + _td(days=sd_off)
+                    if status in ('done', 'cancelled'):
+                        work_days = (14 + _h(state_idx, ti, k + 4) % 77
+                                     if status == 'done' else
+                                     7 + _h(state_idx, ti, k + 4) % 42)
+                        ed = sd + _td(days=work_days)
+                    else:
+                        ed = None
                     cursor.execute(
-                        "INSERT INTO issues (state_id, title, description, status, priority, issue_type, metric_value, created_at, updated_at) "
-                        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                        (state["id"], title, description, status, priority, issue_type, metric_value, created_at, created_at)
-                    )
-                    issue_id = cursor.lastrowid
-                    tag_names = set()
-                    if status == "done":
-                        tag_names.update(["completed", "in progress"])
-                    elif status == "cancelled":
-                        tag_names.update(["will not benefit", "in progress"])
-                    elif priority == "high":
-                        tag_names.update(["urgent", "needs improvement", "in progress"])
+                        'INSERT INTO issues '
+                        '(state_id, title, description, status, priority, issue_type, '
+                        'metric_value, start_date, end_date) '
+                        'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+                        (state_id, title, desc, status, priority, issue_type, metric_val,
+                         sd.strftime('%Y-%m-%d'), ed.strftime('%Y-%m-%d') if ed else None))
+                    iid = cursor.lastrowid
+                    if status == 'done':
+                        tnames = ['completed', 'will probably benefit', 'in progress']
+                    elif status == 'cancelled':
+                        tnames = ['will not benefit', 'in progress']
                     else:
-                        tag_names.update(["needs improvement", "in progress"])
-                    for tag_name in tag_names:
-                        tag_id = tag_lookup.get(tag_name)
-                        if tag_id:
-                            cursor.execute(
-                                "INSERT OR IGNORE INTO issue_tags (issue_id, tag_id) VALUES (?, ?)",
-                                (issue_id, tag_id)
-                            )
+                        tnames = (['needs improvement', 'in progress', 'urgent']
+                                  if priority == 'high' else
+                                  ['needs improvement', 'will probably benefit', 'in progress'])
+                    for tname in tnames:
+                        tid = tag_lookup.get(tname)
+                        if tid:
+                            cursor.execute('INSERT OR IGNORE INTO issue_tags VALUES (?, ?)', (iid, tid))
 
     db.commit()
     db.close()
@@ -469,7 +456,9 @@ def create_issue(state_id):
     description = (request.form.get('description') or '').strip()
     status = (request.form.get('status') or 'open').strip().lower()
     priority = (request.form.get('priority') or 'medium').strip().lower()
-    issue_type = (request.form.get('issue_type') or 'general').strip().lower()
+    issue_type  = (request.form.get('issue_type')  or 'general').strip().lower()
+    start_date  = (request.form.get('start_date')  or '').strip() or None
+    end_date    = (request.form.get('end_date')    or '').strip() or None
 
     allowed_statuses = {'open', 'done', 'cancelled'}
     allowed_priorities = {'low', 'medium', 'high'}
@@ -493,9 +482,10 @@ def create_issue(state_id):
         return redirect(url_for('dashboard'))
 
     cursor.execute('''
-        INSERT INTO issues (state_id, title, description, status, priority, issue_type)
-        VALUES (?, ?, ?, ?, ?, ?)
-    ''', (state_id, title, description, status, priority, issue_type))
+        INSERT INTO issues
+          (state_id, title, description, status, priority, issue_type, start_date, end_date)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    ''', (state_id, title, description, status, priority, issue_type, start_date, end_date))
 
     db.commit()
     db.close()
