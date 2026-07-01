@@ -166,6 +166,8 @@ def init_db():
             priority TEXT DEFAULT 'medium',
             issue_type TEXT DEFAULT 'general',
             metric_value REAL DEFAULT NULL,
+            start_date TEXT DEFAULT NULL,
+            end_date TEXT DEFAULT NULL,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             FOREIGN KEY (state_id) REFERENCES states(id)
@@ -196,6 +198,10 @@ def init_db():
         cursor.execute("ALTER TABLE issues ADD COLUMN issue_type TEXT DEFAULT 'general'")
     if 'metric_value' not in issue_columns:
         cursor.execute('ALTER TABLE issues ADD COLUMN metric_value REAL DEFAULT NULL')
+    if 'start_date' not in issue_columns:
+        cursor.execute('ALTER TABLE issues ADD COLUMN start_date TEXT DEFAULT NULL')
+    if 'end_date' not in issue_columns:
+        cursor.execute('ALTER TABLE issues ADD COLUMN end_date TEXT DEFAULT NULL')
 
     # Ensure all states and tags exist
     for state in ALL_STATES:
