@@ -207,191 +207,160 @@ def init_db():
 
     db.commit()
 
-    # Seed demo issues only if none exist
-    cursor.execute('SELECT COUNT(*) FROM issues')
-    has_issues = cursor.fetchone()[0] > 0
+    # ── CMS Variance Seeding ──────────────────────────────────────────────────
+    # 5 quality tiers derived from DUP_CLAIM_RATES (0=excellent → 4=critical)
+    STATE_PROFILES = [
+        0, 2, 0, 3, 1, 3, 1, 4, 0, 2,  # AL AK AZ AR CA CO CT DE FL GA
+        1, 3, 0, 4, 1, 2, 0, 3, 1, 2,  # HI ID IL IN IA KS KY LA ME MD
+        1, 2, 0, 4, 1, 0, 2, 1, 3, 0,  # MA MI MN MS MO MT NE NV NH NJ
+        3, 1, 1, 2, 0, 3, 1, 1, 3, 2,  # NM NY NC ND OH OK OR PA RI SC
+        1, 4, 0, 2, 0, 2, 1, 4, 0, 3   # SD TN TX UT VT VA WA WV WI WY
+    ]
+    # Target total issues per profile (excellent → critical) before per-state ±40%
+    PROFILE_TOTALS = [18, 40, 66, 96, 142]
+    # Status distributions per tier: (open_frac, done_frac, cancelled_frac)
+    PROFILE_STATUS_DIST = [
+        (0.10, 0.82, 0.08),  # 0 excellent – mostly done
+        (0.20, 0.70, 0.10),  # 1 good
+        (0.40, 0.45, 0.15),  # 2 average
+        (0.62, 0.26, 0.12),  # 3 poor
+        (0.76, 0.14, 0.10),  # 4 critical – mostly open
+    ]
+    NON_DUP_TYPES = [t for t in CMS_ISSUE_TYPES if t != 'duplicate_claims']
+    from datetime import date as _date, timedelta as _td
+    QUARTERS = [
+        ('Q2 2025', _date(2025, 4, 1),  91),
+        ('Q3 2025', _date(2025, 7, 1),  92),
+        ('Q4 2025', _date(2025, 10, 1), 92),
+        ('Q1 2026', _date(2026, 1, 1),  90),
+    ]
 
-    if not has_issues:
-        # Add dummy issues
-        dummy_issues = [
-            ('California', 'Infrastructure improvement program', 'Needs modernization of public roads', 'open', 'high', 'infrastructure'),
-            ('California', 'Education funding boost', 'Increase funding for tech programs', 'done', 'medium', 'education'),
-            ('California', 'Environmental cleanup', 'Clean up coastal areas', 'cancelled', 'medium', 'environment'),
-            ('Texas', 'Water resource management', 'Better irrigation systems', 'open', 'high', 'environment'),
-            ('Texas', 'Job training initiatives', 'Tech workforce development', 'open', 'medium', 'workforce'),
-            ('Texas', 'Health care expansion', 'Rural clinic establishment', 'done', 'high', 'healthcare'),
-            ('Florida', 'Hurricane preparedness', 'Emergency response systems', 'open', 'high', 'emergency'),
-            ('Florida', 'Tourism promotion', 'New destination marketing', 'done', 'low', 'commerce'),
-            ('Florida', 'Coastal erosion control', 'Beach restoration project', 'open', 'high', 'environment'),
-            ('New York', 'Public transit upgrade', 'Modernize subway system', 'open', 'medium', 'infrastructure'),
-            ('New York', 'Tech hub development', 'Support startups and innovation', 'done', 'high', 'technology'),
-            ('New York', 'Housing affordability', 'Build more affordable units', 'open', 'high', 'housing'),
-            ('Pennsylvania', 'Manufacturing support', 'Revitalize industrial areas', 'open', 'medium', 'commerce'),
-            ('Pennsylvania', 'Clean energy transition', 'Shift to renewable sources', 'open', 'high', 'environment'),
-            ('Pennsylvania', 'Community development', 'Support small businesses', 'done', 'medium', 'commerce'),
-            ('Illinois', 'Transportation network', 'Expand rail infrastructure', 'open', 'medium', 'infrastructure'),
-            ('Illinois', 'STEM education', 'Improve science programs', 'done', 'high', 'education'),
-            ('Illinois', 'Pollution reduction', 'Air quality improvement', 'open', 'medium', 'environment'),
-        ]
+    def _h(a, b=0, c=0):
+        """Deterministic hash 0-99"""
+        return (a * 37 + b * 23 + c * 13 + a * b + b * c + 1) % 100
 
-        tag_mapping = {
-            0: [0, 2],  # California issue 1: needs improvement, will not benefit
-            1: [1, 4],  # California issue 2: will probably benefit, completed
-            2: [2, 5],  # California issue 3: will not benefit, in progress
-            3: [0, 1],  # Texas issue 1: needs improvement, will probably benefit
-            4: [1, 2],  # Texas issue 2: will probably benefit, will not benefit
-            5: [1, 4],  # Texas issue 3: will probably benefit, completed
-            6: [0, 3],  # Florida issue 1: needs improvement, urgent
-            7: [4, 1],  # Florida issue 2: completed, will probably benefit
-            8: [0, 3],  # Florida issue 3: needs improvement, urgent
-            9: [0, 1],  # New York issue 1: needs improvement, will probably benefit
-            10: [1, 4], # New York issue 2: will probably benefit, completed
-            11: [0, 1], # New York issue 3: needs improvement, will probably benefit
-            12: [1, 2], # Pennsylvania issue 1: will probably benefit, will not benefit
-            13: [1, 3], # Pennsylvania issue 2: will probably benefit, urgent
-            14: [4, 1], # Pennsylvania issue 3: completed, will probably benefit
-            15: [0, 1], # Illinois issue 1: needs improvement, will probably benefit
-            16: [4, 1], # Illinois issue 2: completed, will probably benefit
-            17: [0, 1], # Illinois issue 3: needs improvement, will probably benefit
-        }
+    cursor.execute("SELECT COUNT(*) FROM issues WHERE issue_type = 'duplicate_claims'")
+    cms_seeded = cursor.fetchone()[0] > 0
 
-        for idx, (state, title, desc, status, priority, issue_type) in enumerate(dummy_issues):
-            cursor.execute('''
-                INSERT INTO issues (state_id, title, description, status, priority, issue_type)
-                VALUES ((SELECT id FROM states WHERE name = ?), ?, ?, ?, ?, ?)
-            ''', (state, title, desc, status, priority, issue_type))
-
-            issue_id = cursor.lastrowid
-            for tag_id in tag_mapping.get(idx, []):
-                cursor.execute('INSERT INTO issue_tags (issue_id, tag_id) VALUES (?, ?)', (issue_id, tag_id + 1))
-
-    # Ensure every state has at least one issue
-    cursor.execute('''
-        SELECT s.name
-        FROM states s
-        LEFT JOIN issues i ON i.state_id = s.id
-        GROUP BY s.id, s.name
-        HAVING COUNT(i.id) = 0
-    ''')
-
-    missing_issue_states = [row[0] for row in cursor.fetchall()]
-    for state_name in missing_issue_states:
-        cursor.execute('''
-            INSERT INTO issues (state_id, title, description, status, priority, issue_type)
-            VALUES (
-                (SELECT id FROM states WHERE name = ?),
-                ?, ?, 'open', 'medium', 'general'
-            )
-        ''', (
-            state_name,
-            f'{state_name} Community Improvement Plan',
-            f'Baseline issue record for {state_name}. Add custom issues to track local priorities.'
-        ))
-
-    # Generate additional diverse issues so the dataset is substantial and realistic
-    cursor.execute('SELECT COUNT(*) FROM issues')
-    current_issue_count = cursor.fetchone()[0]
-    target_issue_count = 520
-
-    if current_issue_count < target_issue_count:
+    if not cms_seeded:
+        cursor.execute('DELETE FROM issue_tags')
+        cursor.execute('DELETE FROM issues')
         cursor.execute('SELECT id, name FROM states ORDER BY name')
         state_rows = cursor.fetchall()
-
         cursor.execute('SELECT id, name FROM tags ORDER BY id')
         tag_rows = cursor.fetchall()
         tag_lookup = {row['name']: row['id'] for row in tag_rows}
 
-        status_cycle = ['open', 'done', 'open', 'open', 'done', 'cancelled', 'open', 'done']
-        priority_cycle = ['high', 'medium', 'low', 'medium', 'high', 'medium']
+        for state_idx, state_row in enumerate(state_rows):
+            state_id   = state_row['id']
+            state_name = state_row['name']
+            profile    = STATE_PROFILES[state_idx]
+            dup_rate   = DUP_CLAIM_RATES[state_idx]
 
-        to_create = target_issue_count - current_issue_count
-        for idx in range(to_create):
-            state = state_rows[idx % len(state_rows)]
-            issue_type = ISSUE_TYPES[(idx + state['id']) % len(ISSUE_TYPES)]
-            title_template = ISSUE_TITLE_TEMPLATES[issue_type][idx % 3]
-            title = f"{state['name']} {title_template} #{idx + 1}"
-            description = (
-                f"{state['name']} program update for {issue_type.replace('_', ' ')}. "
-                f"Tracks milestones, implementation risk, and outcomes for quality reporting."
-            )
+            # Per-state total with ±40% deterministic variance
+            base_total   = PROFILE_TOTALS[profile]
+            var_frac     = (_h(state_idx, 7) - 50) / 100.0  # -0.50 to +0.49
+            total_issues = max(10, int(round(base_total * (1 + var_frac * 0.4))))
+            # Reserve one issue per quarter for duplicate_claims
+            non_dup_total = max(8, total_issues - len(QUARTERS))
 
-            status = status_cycle[idx % len(status_cycle)]
-            priority = priority_cycle[(idx + state['id']) % len(priority_cycle)]
+            # Per-type weights for non-dup types (deterministic per state)
+            weights = [0.5 + _h(state_idx, ti, 3) / 100.0 * 3.0 for ti in range(len(NON_DUP_TYPES))]
+            total_w = sum(weights)
+            type_counts = [max(1, round(w / total_w * non_dup_total)) for w in weights]
+            # Correct rounding drift
+            diff = non_dup_total - sum(type_counts)
+            for i in range(abs(diff)):
+                idx_adj = i % len(type_counts)
+                type_counts[idx_adj] += (1 if diff > 0 else (-1 if type_counts[idx_adj] > 1 else 0))
 
-            cursor.execute('''
-                INSERT INTO issues (state_id, title, description, status, priority, issue_type)
-                VALUES (?, ?, ?, ?, ?, ?)
-            ''', (state['id'], title, description, status, priority, issue_type))
+            open_p, done_p, canc_p = PROFILE_STATUS_DIST[profile]
 
-            issue_id = cursor.lastrowid
-
-            # Attach multiple tags to improve downstream analytics
-            tag_names = {'in progress'}
-            if status == 'done':
-                tag_names.add('completed')
-                tag_names.add('will probably benefit')
-            elif status == 'cancelled':
-                tag_names.add('will not benefit')
-                if priority == 'high':
-                    tag_names.add('urgent')
-            else:
-                tag_names.add('needs improvement')
-                if priority == 'high':
-                    tag_names.add('urgent')
+            # ── duplicate_claims: one issue per reporting quarter ─────────
+            for qi, (qlabel, qstart, qlen) in enumerate(QUARTERS):
+                sd_off = _h(state_idx, qi) % min(20, qlen // 4)
+                sd = qstart + _td(days=sd_off)
+                # Most recent quarter stays open; prior quarters are resolved
+                status = 'open' if qi == len(QUARTERS) - 1 else 'done'
+                if status == 'done':
+                    work_days = 20 + _h(state_idx, qi, 1) % 40
+                    ed = sd + _td(days=work_days)
                 else:
-                    tag_names.add('will probably benefit')
+                    ed = None
+                metric = round(dup_rate + (_h(state_idx, qi, 2) - 50) / 500.0, 2)
+                metric = max(0.1, min(9.9, metric))
+                title  = state_name + ' – ' + CMS_ISSUE_TITLES['duplicate_claims'] + ' (' + qlabel + ')'
+                desc   = CMS_ISSUE_DESCRIPTIONS['duplicate_claims'][(qi + state_idx) % 3]
+                prio   = 'high' if dup_rate > 4.0 else 'medium'
+                cursor.execute(
+                    'INSERT INTO issues '
+                    '(state_id, title, description, status, priority, issue_type, '
+                    'metric_value, start_date, end_date) '
+                    'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+                    (state_id, title, desc, status, prio, 'duplicate_claims', metric,
+                     sd.strftime('%Y-%m-%d'), ed.strftime('%Y-%m-%d') if ed else None))
+                iid = cursor.lastrowid
+                for tname in (['completed', 'will probably benefit']
+                               if status == 'done' else
+                               ['needs improvement', 'in progress', 'urgent']):
+                    tid = tag_lookup.get(tname)
+                    if tid:
+                        cursor.execute('INSERT OR IGNORE INTO issue_tags VALUES (?, ?)', (iid, tid))
 
-            for tag_name in tag_names:
-                tag_id = tag_lookup.get(tag_name)
-                if tag_id:
-                    cursor.execute('INSERT OR IGNORE INTO issue_tags (issue_id, tag_id) VALUES (?, ?)', (issue_id, tag_id))
+            # ── non-duplicate issue types ─────────────────────────────────
+            for ti, issue_type in enumerate(NON_DUP_TYPES):
+                n = type_counts[ti]
+                for k in range(n):
+                    qi = _h(state_idx, ti, k + 5) % len(QUARTERS)
+                    qlabel, qstart, qlen = QUARTERS[qi]
+                    label = CMS_ISSUE_TITLES[issue_type]
+                    title = (state_name + ' – ' + label + ' (' + qlabel + ')'
+                             if n <= 1 else
+                             state_name + ' – ' + label + ' #' + str(k + 1) + ' (' + qlabel + ')')
+                    desc = CMS_ISSUE_DESCRIPTIONS[issue_type][(ti + k + state_idx) % 3]
+                    base_m = CMS_BASE_COUNTS[issue_type]
+                    factor = 0.25 + _h(state_idx, ti, k + 1) / 100.0 * 2.75
+                    metric_val = round(base_m * factor)
+                    rnd = _h(state_idx, ti * 100 + k + 9) % 100
+                    if rnd < int(done_p * 100):
+                        status = 'done'
+                    elif rnd < int((done_p + canc_p) * 100):
+                        status = 'cancelled'
+                    else:
+                        status = 'open'
+                    priority = ['low', 'medium', 'high', 'medium', 'high'][_h(state_idx, ti, k + 2) % 5]
+                    sd_off = _h(state_idx, ti, k + 3) % min(40, qlen // 2)
+                    sd = qstart + _td(days=sd_off)
+                    if status in ('done', 'cancelled'):
+                        work_days = (14 + _h(state_idx, ti, k + 4) % 77
+                                     if status == 'done' else
+                                     7 + _h(state_idx, ti, k + 4) % 42)
+                        ed = sd + _td(days=work_days)
+                    else:
+                        ed = None
+                    cursor.execute(
+                        'INSERT INTO issues '
+                        '(state_id, title, description, status, priority, issue_type, '
+                        'metric_value, start_date, end_date) '
+                        'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+                        (state_id, title, desc, status, priority, issue_type, metric_val,
+                         sd.strftime('%Y-%m-%d'), ed.strftime('%Y-%m-%d') if ed else None))
+                    iid = cursor.lastrowid
+                    if status == 'done':
+                        tnames = ['completed', 'will probably benefit', 'in progress']
+                    elif status == 'cancelled':
+                        tnames = ['will not benefit', 'in progress']
+                    else:
+                        tnames = (['needs improvement', 'in progress', 'urgent']
+                                  if priority == 'high' else
+                                  ['needs improvement', 'will probably benefit', 'in progress'])
+                    for tname in tnames:
+                        tid = tag_lookup.get(tname)
+                        if tid:
+                            cursor.execute('INSERT OR IGNORE INTO issue_tags VALUES (?, ?)', (iid, tid))
 
-    # Ensure each state has at least one issue for each issue type (improves filtered AI accuracy)
-    cursor.execute('SELECT id, name FROM states ORDER BY name')
-    state_rows = cursor.fetchall()
-    cursor.execute('SELECT id, name FROM tags ORDER BY id')
-    tag_rows = cursor.fetchall()
-    tag_lookup = {row['name']: row['id'] for row in tag_rows}
-
-    for state in state_rows:
-        for type_idx, issue_type in enumerate(ISSUE_TYPES):
-            cursor.execute('''
-                SELECT COUNT(*)
-                FROM issues
-                WHERE state_id = ? AND LOWER(issue_type) = ?
-            ''', (state['id'], issue_type))
-            existing_count = cursor.fetchone()[0]
-
-            if existing_count == 0:
-                selector = (state['id'] + type_idx) % 6
-                if selector in (0, 3):
-                    status = 'done'
-                    tags_to_add = ['completed', 'will probably benefit', 'in progress']
-                elif selector == 5:
-                    status = 'cancelled'
-                    tags_to_add = ['will not benefit', 'in progress']
-                else:
-                    status = 'open'
-                    tags_to_add = ['needs improvement', 'in progress']
-
-                priority = ['low', 'medium', 'high'][(state['id'] + type_idx) % 3]
-                title = f"{state['name']} {issue_type.replace('_', ' ').title()} Quality Initiative"
-                description = (
-                    f"Standardized {issue_type.replace('_', ' ')} quality tracking record for {state['name']} "
-                    f"to support consistent cross-state benchmarking."
-                )
-
-                cursor.execute('''
-                    INSERT INTO issues (state_id, title, description, status, priority, issue_type)
-                    VALUES (?, ?, ?, ?, ?, ?)
-                ''', (state['id'], title, description, status, priority, issue_type))
-
-                issue_id = cursor.lastrowid
-                for tag_name in tags_to_add:
-                    tag_id = tag_lookup.get(tag_name)
-                    if tag_id:
-                        cursor.execute('INSERT OR IGNORE INTO issue_tags (issue_id, tag_id) VALUES (?, ?)', (issue_id, tag_id))
-
+    db.commit()
+    db.close()
     db.commit()
     db.close()
 
