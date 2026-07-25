@@ -5,6 +5,9 @@ import os
 from collections import Counter
 import re
 
+import claims_analysis
+import claims_chatbot
+
 app = Flask(__name__)
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DEFAULT_DB_PATH = os.path.join(BASE_DIR, 'issues.db')
@@ -1742,6 +1745,96 @@ def nationwide_rankings():
         'issue_types': CMS_ISSUE_TYPES,
         'issue_type_labels': CMS_ISSUE_TITLES
     })
+
+
+@app.template_filter('commafy')
+def commafy(value):
+    """Format a number with thousands separators."""
+    try:
+        return f'{int(round(float(value))):,}'
+    except (TypeError, ValueError):
+        return value
+
+
+@app.template_filter('money')
+def money(value):
+    """Format a dollar amount, abbreviating large values (K/M/B/T)."""
+    try:
+        num = float(value)
+    except (TypeError, ValueError):
+        return value
+    abs_num = abs(num)
+    sign = '-' if num < 0 else ''
+    for divisor, suffix in ((1e12, 'T'), (1e9, 'B'), (1e6, 'M'), (1e3, 'K')):
+        if abs_num >= divisor:
+            return f'{sign}${abs_num / divisor:,.2f}{suffix}'
+    return f'{sign}${abs_num:,.2f}'
+
+
+@app.route('/claims')
+def claims_analysis_page():
+    """Data-quality & spending analysis of the Medicaid provider-spending CSV."""
+    try:
+        sample = int(request.args.get('sample', claims_analysis.DEFAULT_SAMPLE_ROWS))
+    except (TypeError, ValueError):
+        sample = claims_analysis.DEFAULT_SAMPLE_ROWS
+    sample = max(1000, min(sample, 2_000_000))
+    force = request.args.get('refresh') == '1'
+    analysis = claims_analysis.analyze_csv(max_rows=sample, force=force)
+    return render_template('claims_analysis.html', a=analysis)
+
+
+@app.route('/claims/optimize')
+def claims_optimize_page():
+    """Actionable optimization / overspending view for the claims CSV."""
+    try:
+        sample = int(request.args.get('sample', claims_analysis.DEFAULT_SAMPLE_ROWS))
+    except (TypeError, ValueError):
+        sample = claims_analysis.DEFAULT_SAMPLE_ROWS
+    sample = max(1000, min(sample, 2_000_000))
+    force = request.args.get('refresh') == '1'
+    analysis = claims_analysis.analyze_csv(max_rows=sample, force=force)
+    return render_template('claims_optimize.html', a=analysis)
+
+
+@app.route('/claims/methodology')
+def claims_methodology_page():
+    """Data dictionary & methodology reference for the claims CSV analysis."""
+    try:
+        sample = int(request.args.get('sample', claims_analysis.DEFAULT_SAMPLE_ROWS))
+    except (TypeError, ValueError):
+        sample = claims_analysis.DEFAULT_SAMPLE_ROWS
+    sample = max(1000, min(sample, 2_000_000))
+    force = request.args.get('refresh') == '1'
+    analysis = claims_analysis.analyze_csv(max_rows=sample, force=force)
+    return render_template('claims_methodology.html', a=analysis)
+
+
+@app.route('/api/claims/chat', methods=['POST'])
+def claims_chat_api():
+    """Answer a natural-language question grounded on the sampled claims data."""
+    data = request.get_json(silent=True) or {}
+    question = data.get('question', '')
+    try:
+        sample = int(data.get('sample', claims_analysis.DEFAULT_SAMPLE_ROWS))
+    except (TypeError, ValueError):
+        sample = claims_analysis.DEFAULT_SAMPLE_ROWS
+    sample = max(1000, min(sample, 2_000_000))
+    analysis = claims_analysis.analyze_csv(max_rows=sample)
+    detail = claims_analysis.build_detail_index(max_rows=sample)
+    return jsonify(claims_chatbot.answer_question(question, analysis, detail))
+
+
+@app.route('/api/claims/data')
+def claims_data_api():
+    """JSON endpoint with the CSV analysis (used for charts / integrations)."""
+    try:
+        sample = int(request.args.get('sample', claims_analysis.DEFAULT_SAMPLE_ROWS))
+    except (TypeError, ValueError):
+        sample = claims_analysis.DEFAULT_SAMPLE_ROWS
+    sample = max(1000, min(sample, 2_000_000))
+    force = request.args.get('refresh') == '1'
+    return jsonify(claims_analysis.analyze_csv(max_rows=sample, force=force))
 
 
 # Ensure schema/data are initialized for both local run and WSGI (gunicorn/Render)

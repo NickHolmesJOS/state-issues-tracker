@@ -31,3 +31,7 @@ Thumbs.db
 
 # Logs
 *.log
+
+# Large data files (too big for GitHub - transfer manually)
+Data/
+*.csv

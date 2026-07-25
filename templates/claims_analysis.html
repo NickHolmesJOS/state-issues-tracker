@@ -1,0 +1,1258 @@
+{% extends "base.html" %}
+
+{% block title %}Claims Data Analysis - State Issues Tracker{% endblock %}
+
+{% block content %}
+<div class="container-lg py-5">
+    <div class="row mb-4">
+        <div class="col-12 d-flex flex-wrap justify-content-between align-items-start gap-2">
+            <div>
+                <h1 class="display-5 mb-2">
+                    <i class="bi bi-file-earmark-medical"></i> Claims Data Analysis
+                </h1>
+                <p class="text-muted mb-0">
+                    Medicaid provider-spending data quality &amp; spending insights
+                </p>
+            </div>
+            <form method="get" action="/claims" class="d-flex align-items-end gap-2">
+                <div>
+                    <label class="form-label small text-muted mb-1">Rows sampled</label>
+                    <select name="sample" class="form-select form-select-sm">
+                        {% for opt in [25000, 50000, 100000, 250000, 500000] %}
+                        <option value="{{ opt }}" {% if a.sample_rows_setting == opt %}selected{% endif %}>{{ opt|commafy }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <button type="submit" class="btn btn-sm btn-primary">
+                    <i class="bi bi-arrow-repeat"></i> Analyze
+                </button>
+            </form>
+        </div>
+    </div>
+
+    {% if not a.available %}
+    <div class="alert alert-warning">
+        <i class="bi bi-exclamation-triangle"></i>
+        CSV file <code>{{ a.file_name }}</code> was not found. Place it at
+        <code>Data/medicaid-provider-spending.csv</code> in the project root.
+    </div>
+    {% else %}
+
+    <style>
+        .claims-section { scroll-margin-top: 90px; }
+        .claims-sidenav { top: 90px; }
+        .claims-sidenav .nav-link {
+            padding: .35rem .75rem;
+            font-size: .875rem;
+            color: #495057;
+            border-left: 3px solid transparent;
+            border-radius: 0;
+        }
+        .claims-sidenav .nav-link:hover { color: #0d6efd; background: rgba(13,110,253,.06); }
+        .claims-sidenav .nav-link.active {
+            color: #0d6efd;
+            font-weight: 600;
+            background: rgba(13,110,253,.08);
+            border-left-color: #0d6efd;
+        }
+        /* "How this is calculated" methodology notes shown throughout the page. */
+        .metric-note {
+            border-left: 3px solid #0dcaf0;
+            background: rgba(13,202,240,.07);
+            border-radius: .25rem;
+            padding: .5rem .75rem;
+            font-size: .8125rem;
+            color: #495057;
+            margin-top: .75rem;
+        }
+        .metric-note .bi { color: #0aa2c0; }
+        .metric-note strong { color: #087990; }
+        .metric-note .tag {
+            display: inline-block;
+            font-size: .6875rem;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: .03em;
+            padding: .05rem .4rem;
+            border-radius: .25rem;
+            margin-right: .25rem;
+        }
+        .tag-sum { background: #d1e7dd; color: #0f5132; }
+        .tag-dedup { background: #fff3cd; color: #664d03; }
+        .tag-bin { background: #cfe2ff; color: #084298; }
+        .tag-derived { background: #e2d9f3; color: #493174; }
+        /* Short plain-language explanation shown inside each key-metric card. */
+        .metric-explain {
+            font-size: .75rem;
+            line-height: 1.35;
+            color: #6c757d;
+            margin: .6rem 0 0;
+            padding-top: .5rem;
+            border-top: 1px dashed #dee2e6;
+        }
+        .metric-explain .tag {
+            display: inline-block;
+            font-size: .625rem;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: .03em;
+            padding: .02rem .35rem;
+            border-radius: .25rem;
+            margin-bottom: .15rem;
+        }
+    </style>
+
+    <div class="row gx-lg-4">
+    <!-- Side navigation -->
+    <aside class="col-lg-3 col-xl-2 d-none d-lg-block">
+        <nav id="claimsSideNav" class="nav nav-pills flex-column claims-sidenav position-sticky">
+            <span class="text-muted text-uppercase small fw-bold px-2 mb-2">On this page</span>
+            <a class="nav-link" href="#sec-overview"><i class="bi bi-speedometer2 me-1"></i> Overview</a>
+            <a class="nav-link" href="#sec-exposure"><i class="bi bi-exclamation-octagon me-1"></i> Exposure &amp; Concentration</a>
+            <a class="nav-link" href="#sec-insights"><i class="bi bi-cpu me-1"></i> Auto Insights</a>
+            <a class="nav-link" href="#sec-trends"><i class="bi bi-graph-up me-1"></i> Trends &amp; Issues</a>
+            <a class="nav-link" href="#sec-issues"><i class="bi bi-clipboard2-data me-1"></i> Data-Quality Issues</a>
+            <a class="nav-link" href="#sec-top"><i class="bi bi-trophy me-1"></i> Top Codes &amp; Providers</a>
+            <a class="nav-link" href="#sec-yearly"><i class="bi bi-bar-chart-line me-1"></i> Yearly &amp; Costliest</a>
+            <a class="nav-link" href="#sec-risk"><i class="bi bi-shield-exclamation me-1"></i> Highest-Risk Providers</a>
+            <a class="nav-link" href="#sec-category"><i class="bi bi-diagram-3 me-1"></i> Clinical Categories</a>
+            <a class="nav-link" href="#sec-peers"><i class="bi bi-people me-1"></i> Peer-Comparison Outliers</a>
+            <hr class="my-2">
+            <a class="btn btn-sm btn-success w-100 mb-2" href="/claims/optimize">
+                <i class="bi bi-lightbulb"></i> Optimization View
+            </a>
+            <a class="btn btn-sm btn-outline-secondary w-100" href="/claims/methodology">
+                <i class="bi bi-book"></i> Methodology &amp; Data Dictionary
+            </a>
+        </nav>
+    </aside>
+    <!-- Main content -->
+    <div class="col-lg-9 col-xl-10">
+
+    <!-- Source info -->
+    <div id="sec-overview" class="claims-section alert alert-info d-flex flex-wrap gap-3 align-items-center">
+        <span><i class="bi bi-hdd"></i> <strong>{{ a.file_name }}</strong> ({{ a.file_size_human }})</span>
+        <span><i class="bi bi-table"></i> Analyzed <strong>{{ a.rows_analyzed|commafy }}</strong> rows{% if a.is_sample %} <span class="badge bg-secondary">sample</span>{% endif %}</span>
+        <span><i class="bi bi-calendar-range"></i> {{ a.date_min or 'n/a' }} → {{ a.date_max or 'n/a' }}</span>
+        <span><i class="bi bi-people"></i> {{ a.unique_providers|commafy }} providers · {{ a.unique_hcpcs|commafy }} HCPCS codes</span>
+    </div>
+
+    <!-- How to read this page (methodology legend) -->
+    <div class="card shadow-sm mb-4 border-0" style="background:#f8f9fa;">
+        <div class="card-body py-3">
+            <div class="d-flex flex-wrap justify-content-between align-items-center gap-2">
+                <div>
+                    <h6 class="mb-1"><i class="bi bi-info-circle text-info"></i> How to read this page</h6>
+                    <p class="small text-muted mb-0">
+                        Every figure below is computed by <strong>streaming a sample</strong> of the raw CSV
+                        (the full file is {{ a.file_size_human }} / hundreds of millions of rows, so it is never
+                        loaded whole). Look for the <i class="bi bi-info-circle text-info"></i> notes under each
+                        section explaining exactly how each metric is derived. The tags mean:
+                    </p>
+                </div>
+                <a href="/claims/methodology" class="btn btn-sm btn-outline-info">
+                    <i class="bi bi-book"></i> Full data dictionary
+                </a>
+            </div>
+            <div class="mt-2 small">
+                <span class="tag tag-sum">Summed</span> added up across rows &nbsp;
+                <span class="tag tag-dedup">Deduped</span> repeated keys collapsed/counted &nbsp;
+                <span class="tag tag-bin">Binned</span> grouped into buckets &nbsp;
+                <span class="tag tag-derived">Derived</span> calculated from other metrics
+            </div>
+        </div>
+    </div>
+
+    <!-- Key Metrics -->
+    <div class="row mb-4">
+        <div class="col-md-3 mb-3">
+            <div class="card stat-card h-100">
+                <div class="card-body">
+                    <div class="d-flex justify-content-between align-items-start">
+                        <div>
+                            <h6 class="text-muted mb-1">Total Paid</h6>
+                            <h3 class="mb-0">{{ a.total_paid|money }}</h3>
+                            <small class="text-muted">{{ a.avg_paid_per_line|money }} / claim line</small>
+                        </div>
+                        <i class="bi bi-cash-stack text-success" style="font-size: 2rem;"></i>
+                    </div>
+                    <p class="metric-explain">
+                        <span class="tag tag-sum">Summed</span><br>
+                        Every dollar Medicaid paid, added up across all sampled rows
+                        (<code>TOTAL_PAID</code>). The sub-line divides it by claim lines to show the
+                        <em>average cost per line</em>.
+                    </p>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-3 mb-3">
+            <div class="card stat-card h-100">
+                <div class="card-body">
+                    <div class="d-flex justify-content-between align-items-start">
+                        <div>
+                            <h6 class="text-muted mb-1">Total Patients</h6>
+                            <h3 class="mb-0">{{ a.total_patients|commafy }}</h3>
+                            <small class="text-muted">{{ a.avg_paid_per_patient|money }} / patient</small>
+                        </div>
+                        <i class="bi bi-person-vcard text-primary" style="font-size: 2rem;"></i>
+                    </div>
+                    <p class="metric-explain">
+                        <span class="tag tag-sum">Summed</span><br>
+                        Patient counts (<code>TOTAL_PATIENTS</code>) added across rows. Each row is one
+                        provider×code×month, so a person seen in several months is counted more than once
+                        &mdash; this is <strong>not</strong> a unique-people count.
+                    </p>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-3 mb-3">
+            <div class="card stat-card h-100">
+                <div class="card-body">
+                    <div class="d-flex justify-content-between align-items-start">
+                        <div>
+                            <h6 class="text-muted mb-1">Claim Lines</h6>
+                            <h3 class="mb-0">{{ a.total_claim_lines|commafy }}</h3>
+                        </div>
+                        <i class="bi bi-list-ol text-info" style="font-size: 2rem;"></i>
+                    </div>
+                    <p class="metric-explain">
+                        <span class="tag tag-sum">Summed</span><br>
+                        Total number of billed service lines (<code>TOTAL_CLAIM_LINES</code>) across the
+                        sample &mdash; the raw volume of billed items behind the dollars.
+                    </p>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-3 mb-3">
+            <div class="card stat-card h-100 {% if a.clean_pct >= 90 %}border-success{% elif a.clean_pct >= 70 %}border-warning{% else %}border-danger{% endif %}">
+                <div class="card-body">
+                    <div class="d-flex justify-content-between align-items-start">
+                        <div>
+                            <h6 class="text-muted mb-1">Data Quality</h6>
+                            <h3 class="mb-0 {% if a.clean_pct >= 90 %}text-success{% elif a.clean_pct >= 70 %}text-warning{% else %}text-danger{% endif %}">{{ a.clean_pct }}%</h3>
+                            <small class="text-muted">rows without major issues</small>
+                        </div>
+                        <i class="bi bi-shield-check {% if a.clean_pct >= 90 %}text-success{% elif a.clean_pct >= 70 %}text-warning{% else %}text-danger{% endif %}" style="font-size: 2rem;"></i>
+                    </div>
+                    <p class="metric-explain">
+                        <span class="tag tag-derived">Derived</span><br>
+                        Share of rows with <strong>no major issue</strong> (no duplicate, missing NPI,
+                        invalid code, or payment outlier). Higher is better &mdash; green &ge;90%, amber
+                        &ge;70%, red below.
+                    </p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="metric-note mb-4">
+        <i class="bi bi-info-circle"></i>
+        <span class="tag tag-sum">Summed</span>
+        <strong>Total Paid</strong>, <strong>Total Patients</strong> and <strong>Claim Lines</strong> are the
+        arithmetic sum of the <code>TOTAL_PAID</code>, <code>TOTAL_PATIENTS</code> and
+        <code>TOTAL_CLAIM_LINES</code> columns across every sampled row.
+        <span class="tag tag-derived ms-2">Derived</span>
+        the per-line and per-patient averages divide those sums, and <strong>Data Quality %</strong> is the
+        share of rows with no major issue.
+        <br>
+        <i class="bi bi-exclamation-triangle text-warning"></i>
+        <em>Caveat:</em> each CSV row is a monthly (provider&nbsp;×&nbsp;code&nbsp;×&nbsp;month) roll-up, so
+        <strong>Total Patients</strong> counts a patient once per month they appear &mdash; it is
+        <strong>not</strong> a de-duplicated count of unique people.
+    </div>
+
+    <!-- Financial exposure & spend concentration -->
+    <div id="sec-exposure" class="claims-section row mb-4">
+        <div class="col-lg-6 mb-3">
+            <div class="card shadow-sm h-100 border-danger">
+                <div class="card-body">
+                    <div class="d-flex justify-content-between align-items-start mb-2">
+                        <div>
+                            <h6 class="text-muted mb-1"><i class="bi bi-exclamation-octagon text-danger"></i> Financial Exposure at Risk</h6>
+                            <h2 class="mb-0 text-danger">{{ a.exposure_total|money }}</h2>
+                            <small class="text-muted">{{ a.exposure_pct }}% of total paid sits on rows with a data-quality issue</small>
+                        </div>
+                    </div>
+                    <table class="table table-sm mb-0 mt-3">
+                        <tbody>
+                            {% for b in a.exposure_breakdown %}
+                            <tr>
+                                <td class="small">{{ b.label }}</td>
+                                <td class="text-end small fw-semibold">{{ b.amount|money }}</td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+        <div class="col-lg-6 mb-3">
+            <div class="card shadow-sm h-100">
+                <div class="card-body">
+                    <h6 class="text-muted mb-3"><i class="bi bi-pie-chart text-primary"></i> Spend Concentration</h6>
+                    <p class="small text-muted mb-3">
+                        A small number of providers can account for most of the spend &mdash; a common
+                        signal for where to focus audits.
+                    </p>
+                    <div class="mb-3">
+                        <div class="d-flex justify-content-between small mb-1">
+                            <span>Top 10 providers</span>
+                            <span class="fw-semibold">{{ a.top10_dollars_pct }}% of spend</span>
+                        </div>
+                        <div class="progress" style="height: 10px;">
+                            <div class="progress-bar bg-danger js-bar" data-width="{{ a.top10_dollars_pct }}"></div>
+                        </div>
+                        <small class="text-muted">{{ a.top10_dollars|money }} across just {{ a.top10_count_share }}% of providers</small>
+                    </div>
+                    <div class="mb-3">
+                        <div class="d-flex justify-content-between small mb-1">
+                            <span>Top 1% of providers</span>
+                            <span class="fw-semibold">{{ a.top1_provider_share }}% of spend</span>
+                        </div>
+                        <div class="progress" style="height: 10px;">
+                            <div class="progress-bar bg-warning js-bar" data-width="{{ a.top1_provider_share }}"></div>
+                        </div>
+                    </div>
+                    <div>
+                        <div class="d-flex justify-content-between small mb-1">
+                            <span>Top 10% of providers</span>
+                            <span class="fw-semibold">{{ a.top10_provider_share }}% of spend</span>
+                        </div>
+                        <div class="progress" style="height: 10px;">
+                            <div class="progress-bar bg-info js-bar" data-width="{{ a.top10_provider_share }}"></div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="metric-note mb-4">
+        <i class="bi bi-info-circle"></i>
+        <span class="tag tag-sum">Summed</span>
+        <strong>Financial Exposure</strong> sums the <code>TOTAL_PAID</code> dollars sitting on rows that
+        tripped a data-quality rule (duplicates, per-line outliers, missing NPI, invalid code). To avoid
+        double-counting a row flagged for several reasons, the total is capped at overall Total Paid.
+        <span class="tag tag-derived ms-2">Derived</span>
+        <strong>Spend Concentration</strong> ranks providers by their summed paid dollars, then reports what
+        share of the total the top&nbsp;1%, top&nbsp;10% and top&nbsp;10 providers represent.
+    </div>
+
+    <!-- Auto insights -->
+    <div id="sec-insights" class="claims-section row mb-4">
+        <div class="col-12">
+            <div class="card shadow-sm">
+                <div class="card-body">
+                    <h5 class="card-title mb-3"><i class="bi bi-cpu"></i> Auto Insights</h5>
+                    <div id="claimsAutoInsights" class="small text-muted">Generating recommendations...</div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Charts -->
+    <div id="sec-trends" class="claims-section row mb-4">
+        <div class="col-lg-7 mb-4">
+            <div class="card shadow-sm h-100">
+                <div class="card-body">
+                    <h5 class="card-title mb-3"><i class="bi bi-graph-up-arrow text-success me-2"></i>Monthly Spend Trend</h5>
+                    <canvas id="monthlyChart" style="max-height:340px;"></canvas>
+                </div>
+            </div>
+        </div>
+        <div class="col-lg-5 mb-4">
+            <div class="card shadow-sm h-100">
+                <div class="card-body">
+                    <h5 class="card-title mb-3"><i class="bi bi-bug text-danger me-2"></i>Data Quality Issues</h5>
+                    <canvas id="issuesChart" style="max-height:340px;"></canvas>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Top providers / codes charts -->
+    <div class="claims-section row mb-4">
+        <div class="col-lg-6 mb-4">
+            <div class="card shadow-sm h-100">
+                <div class="card-body">
+                    <h5 class="card-title mb-3"><i class="bi bi-people text-primary me-2"></i>Top 10 Providers by Spend</h5>
+                    <div class="metric-note mb-3">
+                        <i class="bi bi-info-circle"></i>
+                        <span class="tag tag-sum">Summed</span>
+                        each provider's <code>TOTAL_PAID</code> is summed across all their rows, then the
+                        <span class="tag tag-dedup">Deduped</span> highest-paid distinct NPIs are ranked. Bars are
+                        labelled by billing NPI.
+                    </div>
+                    <canvas id="providersChart" style="max-height:340px;"></canvas>
+                </div>
+            </div>
+        </div>
+        <div class="col-lg-6 mb-4">
+            <div class="card shadow-sm h-100">
+                <div class="card-body">
+                    <h5 class="card-title mb-3"><i class="bi bi-upc-scan text-success me-2"></i>Top 10 HCPCS Codes by Spend</h5>
+                    <div class="metric-note mb-3">
+                        <i class="bi bi-info-circle"></i>
+                        <span class="tag tag-sum">Summed</span>
+                        paid dollars are summed per <code>HCPCS_CODE</code> and the 10 highest-spend codes are
+                        shown &mdash; the specific procedures driving the most spend.
+                    </div>
+                    <canvas id="hcpcsChart" style="max-height:340px;"></canvas>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Issues detail table -->
+    <div id="sec-issues" class="claims-section row mb-4">
+        <div class="col-12">
+            <div class="card shadow-sm">
+                <div class="card-body">
+                    <h5 class="card-title mb-3"><i class="bi bi-clipboard2-data"></i> Detected Data-Quality Issues</h5>
+                    <p class="small text-muted">Click <em>View examples</em> on any issue to see the actual offending rows and why each one is a problem.</p>
+                    <div class="metric-note mb-3">
+                        <i class="bi bi-info-circle"></i>
+                        <span class="tag tag-dedup">Deduped</span>
+                        <strong>Duplicate Claim Rows</strong> are detected on the key
+                        <code>(billing NPI, servicing NPI, HCPCS, month)</code>: the first occurrence is kept and
+                        every later repeat is counted as a duplicate.
+                        <span class="tag tag-sum ms-2">Summed</span>
+                        every other issue is a <strong>row count</strong> (and its % of the sample); a single row
+                        can trip more than one rule, so the individual counts may add up to more than the sample size.
+                    </div>
+                    <div class="table-responsive">
+                        <table class="table table-hover align-middle">
+                            <thead>
+                                <tr>
+                                    <th>Issue</th>
+                                    <th>Severity</th>
+                                    <th class="text-end">Rows Affected</th>
+                                    <th class="text-end">% of Sample</th>
+                                    <th>Description</th>
+                                    <th></th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% for issue in a.issues %}
+                                <tr>
+                                    <td><strong>{{ issue.label }}</strong></td>
+                                    <td>
+                                        <span class="badge bg-{% if issue.severity == 'high' %}danger{% elif issue.severity == 'medium' %}warning{% else %}secondary{% endif %}">
+                                            {{ issue.severity|title }}
+                                        </span>
+                                    </td>
+                                    <td class="text-end">{{ issue.count|commafy }}</td>
+                                    <td class="text-end">{{ issue.pct }}%</td>
+                                    <td class="small text-muted">{{ issue.description }}</td>
+                                    <td class="text-end">
+                                        {% if issue.examples %}
+                                        <button class="btn btn-sm btn-outline-primary" type="button" data-bs-toggle="collapse" data-bs-target="#issue-{{ issue.key }}">
+                                            <i class="bi bi-search"></i> View examples
+                                        </button>
+                                        {% else %}
+                                        <span class="text-muted small">None</span>
+                                        {% endif %}
+                                    </td>
+                                </tr>
+                                {% if issue.examples %}
+                                <tr class="collapse" id="issue-{{ issue.key }}">
+                                    <td colspan="6" class="bg-light">
+                                        <div class="p-2">
+                                            <div class="alert alert-warning py-2 small mb-2">
+                                                <i class="bi bi-exclamation-triangle"></i>
+                                                <strong>Why this is bad:</strong> {{ issue.impact }}
+                                            </div>
+                                            <p class="small text-muted mb-2">
+                                                Showing up to {{ issue.examples|length }} example row(s) flagged as
+                                                <strong>{{ issue.label }}</strong>:
+                                            </p>
+                                            <div class="table-responsive">
+                                                <table class="table table-sm table-bordered bg-white mb-0">
+                                                    <thead class="table-light">
+                                                        <tr>
+                                                            <th>Billing NPI</th><th>Servicing NPI</th><th>HCPCS</th>
+                                                            <th>Month</th><th class="text-end">Patients</th>
+                                                            <th class="text-end">Lines</th><th class="text-end">Paid</th>
+                                                            <th>Why flagged</th>
+                                                        </tr>
+                                                    </thead>
+                                                    <tbody>
+                                                        {% for ex in issue.examples %}
+                                                        <tr>
+                                                            <td>{% if ex.billing %}<code>{{ ex.billing }}</code>{% else %}<span class="badge bg-danger">blank</span>{% endif %}</td>
+                                                            <td>{% if ex.servicing %}<code>{{ ex.servicing }}</code>{% else %}<span class="badge bg-danger">blank</span>{% endif %}</td>
+                                                            <td>{% if ex.hcpcs %}<code>{{ ex.hcpcs }}</code>{% else %}<span class="badge bg-danger">blank</span>{% endif %}</td>
+                                                            <td>{{ ex.month or '—' }}</td>
+                                                            <td class="text-end">{{ ex.patients if ex.patients is not none else '—' }}</td>
+                                                            <td class="text-end">{{ ex.lines if ex.lines is not none else '—' }}</td>
+                                                            <td class="text-end">{% if ex.paid is not none %}{{ ex.paid|money }}{% else %}—{% endif %}</td>
+                                                            <td class="small text-danger">{{ ex.reason }}</td>
+                                                        </tr>
+                                                        {% endfor %}
+                                                    </tbody>
+                                                </table>
+                                            </div>
+                                        </div>
+                                    </td>
+                                </tr>
+                                {% endif %}
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Top HCPCS + Top providers -->
+    <div id="sec-top" class="claims-section row">
+        <div class="col-lg-6 mb-4">
+            <div class="card shadow-sm h-100">
+                <div class="card-body">
+                    <h5 class="card-title mb-3"><i class="bi bi-trophy text-warning"></i> Top HCPCS Codes by Spend</h5>
+                    <div class="table-responsive">
+                        <table class="table table-sm table-striped">
+                            <thead><tr><th>#</th><th>HCPCS</th><th class="text-end">Total Paid</th><th class="text-end">Claim Lines</th></tr></thead>
+                            <tbody>
+                                {% for h in a.top_hcpcs %}
+                                <tr><td>{{ loop.index }}</td><td><code>{{ h.code }}</code></td><td class="text-end">{{ h.paid|money }}</td><td class="text-end">{{ h.lines|commafy }}</td></tr>
+                                {% else %}
+                                <tr><td colspan="4" class="text-muted">No data.</td></tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <div class="col-lg-6 mb-4">
+            <div class="card shadow-sm h-100">
+                <div class="card-body">
+                    <h5 class="card-title mb-3"><i class="bi bi-hospital text-primary"></i> Top Providers by Spend</h5>
+                    <div class="table-responsive">
+                        <table class="table table-sm table-striped">
+                            <thead><tr><th>#</th><th>Provider NPI</th><th class="text-end">Total Paid</th><th class="text-end">Claims</th></tr></thead>
+                            <tbody>
+                                {% for p in a.top_providers %}
+                                <tr><td>{{ loop.index }}</td><td><code>{{ p.npi }}</code></td><td class="text-end">{{ p.paid|money }}</td><td class="text-end">{{ p.claims|commafy }}</td></tr>
+                                {% else %}
+                                <tr><td colspan="4" class="text-muted">No data.</td></tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Year-over-year spend + costliest codes -->
+    <div id="sec-yearly" class="claims-section row">
+        <div class="col-lg-6 mb-4">
+            <div class="card shadow-sm h-100">
+                <div class="card-body">
+                    <h5 class="card-title mb-3"><i class="bi bi-bar-chart-line text-success"></i> Year-over-Year Spend</h5>
+                    <div class="metric-note mb-3">
+                        <i class="bi bi-info-circle"></i>
+                        <span class="tag tag-bin">Binned</span>
+                        rows are grouped by the year taken from <code>CLAIM_FROM_MONTH</code> (<code>YYYY-MM</code>),
+                        with paid dollars <span class="tag tag-sum">Summed</span> per year.
+                        <span class="tag tag-derived ms-2">Derived</span>
+                        <strong>YoY Change</strong> is the percent difference from the prior year.
+                    </div>
+                    <canvas id="yearlyChart" style="max-height:220px;" class="mb-3"></canvas>
+                    <div class="table-responsive">
+                        <table class="table table-sm table-striped">
+                            <thead><tr><th>Year</th><th class="text-end">Total Paid</th><th class="text-end">YoY Change</th></tr></thead>
+                            <tbody>
+                                {% for y in a.yearly %}
+                                <tr>
+                                    <td>{{ y.year }}</td>
+                                    <td class="text-end">{{ y.paid|money }}</td>
+                                    <td class="text-end">
+                                        {% if y.yoy_pct is none %}
+                                        <span class="text-muted">&mdash;</span>
+                                        {% elif y.yoy_pct >= 0 %}
+                                        <span class="text-success"><i class="bi bi-arrow-up-short"></i>{{ y.yoy_pct }}%</span>
+                                        {% else %}
+                                        <span class="text-danger"><i class="bi bi-arrow-down-short"></i>{{ y.yoy_pct }}%</span>
+                                        {% endif %}
+                                    </td>
+                                </tr>
+                                {% else %}
+                                <tr><td colspan="3" class="text-muted">No data.</td></tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <div class="col-lg-6 mb-4">
+            <div class="card shadow-sm h-100">
+                <div class="card-body">
+                    <h5 class="card-title mb-3"><i class="bi bi-cash-coin text-danger"></i> Costliest Codes (Paid per Line)</h5>
+                    <p class="small text-muted mb-2">Highest average payment per claim line &mdash; candidates for pricing review. <strong>×Avg</strong> shows how many times the sample-wide average per line each code costs.</p>
+                    <div class="metric-note mb-2">
+                        <i class="bi bi-info-circle"></i>
+                        <span class="tag tag-derived">Derived</span>
+                        <strong>Avg / Line</strong> = summed paid &divide; summed claim lines for that code.
+                        Codes with fewer than 10 lines are excluded so low-volume noise does not top the list.
+                    </div>
+                    <div class="table-responsive">
+                        <table class="table table-sm align-middle">
+                            <thead><tr><th>#</th><th>HCPCS</th><th class="text-end">Avg / Line</th><th class="text-end">×Avg</th><th class="text-end">Lines</th><th></th></tr></thead>
+                            <tbody>
+                                {% for h in a.costliest_hcpcs %}
+                                <tr>
+                                    <td>{{ loop.index }}</td>
+                                    <td><code>{{ h.code }}</code></td>
+                                    <td class="text-end">{{ h.avg_per_line|money }}</td>
+                                    <td class="text-end">
+                                        {% if h.vs_avg %}<span class="badge bg-{% if h.vs_avg >= 10 %}danger{% elif h.vs_avg >= 3 %}warning{% else %}secondary{% endif %}">{{ h.vs_avg }}×</span>{% else %}—{% endif %}
+                                    </td>
+                                    <td class="text-end">{{ h.lines|commafy }}</td>
+                                    <td class="text-end">
+                                        {% if h.example %}
+                                        <button class="btn btn-sm btn-outline-danger py-0" type="button" data-bs-toggle="collapse" data-bs-target="#code-{{ h.code }}">
+                                            <i class="bi bi-search"></i>
+                                        </button>
+                                        {% endif %}
+                                    </td>
+                                </tr>
+                                {% if h.example %}
+                                <tr class="collapse" id="code-{{ h.code }}">
+                                    <td colspan="6" class="bg-light small">
+                                        <div class="p-2">
+                                            <div class="mb-1"><strong>Why it's an outlier:</strong>
+                                                code <code>{{ h.code }}</code> pays
+                                                <strong>{{ h.avg_per_line|money }}</strong> per line on average
+                                                {% if h.vs_avg %}(<strong>{{ h.vs_avg }}×</strong> the sample-wide average){% endif %}.
+                                                Its most extreme row paid <strong>{{ h.example.per_line|money }}</strong>
+                                                for a single line &mdash; a strong sign of mispricing, a units error, or an overpayment.
+                                            </div>
+                                            <div class="text-muted">
+                                                Worst row: billing <code>{{ h.example.billing or 'blank' }}</code>,
+                                                servicing <code>{{ h.example.servicing or 'blank' }}</code>,
+                                                month {{ h.example.month or '—' }},
+                                                {{ h.example.lines|commafy }} line(s),
+                                                paid {{ h.example.paid|money }}.
+                                            </div>
+                                        </div>
+                                    </td>
+                                </tr>
+                                {% endif %}
+                                {% else %}
+                                <tr><td colspan="6" class="text-muted">No data.</td></tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- High-risk providers -->
+    <div id="sec-risk" class="claims-section row">
+        <div class="col-12 mb-4">
+            <div class="card shadow-sm border-warning">
+                <div class="card-body">
+                    <h5 class="card-title mb-3"><i class="bi bi-shield-exclamation text-danger"></i> Highest-Risk Providers</h5>
+                    <p class="small text-muted mb-2">
+                        Providers ranked by the number of their claim rows that triggered a data-quality
+                        flag (missing NPI, duplicate, invalid code, or payment outlier). High flag rates
+                        warrant a closer audit.
+                    </p>
+                    <div class="table-responsive">
+                        <table class="table table-hover table-sm align-middle">
+                            <thead>
+                                <tr>
+                                    <th>#</th><th>Provider NPI</th>
+                                    <th class="text-end">Flagged Rows</th>
+                                    <th class="text-end">Total Claims</th>
+                                    <th class="text-end">Flag Rate</th>
+                                    <th class="text-end">Total Paid</th>
+                                    <th></th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% for p in a.high_risk_providers %}
+                                <tr>
+                                    <td>{{ loop.index }}</td>
+                                    <td><code>{{ p.npi }}</code></td>
+                                    <td class="text-end">{{ p.flagged_rows|commafy }}</td>
+                                    <td class="text-end">{{ p.claims|commafy }}</td>
+                                    <td class="text-end">
+                                        <span class="badge bg-{% if p.flag_rate >= 50 %}danger{% elif p.flag_rate >= 20 %}warning{% else %}secondary{% endif %}">{{ p.flag_rate }}%</span>
+                                    </td>
+                                    <td class="text-end">{{ p.paid|money }}</td>
+                                    <td class="text-end">
+                                        {% if p.examples %}
+                                        <button class="btn btn-sm btn-outline-danger py-0" type="button" data-bs-toggle="collapse" data-bs-target="#prov-{{ loop.index }}">
+                                            <i class="bi bi-search"></i> Inspect
+                                        </button>
+                                        {% endif %}
+                                    </td>
+                                </tr>
+                                {% if p.examples %}
+                                <tr class="collapse" id="prov-{{ loop.index }}">
+                                    <td colspan="7" class="bg-light">
+                                        <div class="p-2">
+                                            <div class="alert alert-danger py-2 small mb-2">
+                                                <i class="bi bi-exclamation-octagon"></i>
+                                                <strong>Why this provider is high-risk:</strong>
+                                                {{ p.flag_rate }}% of its {{ p.claims|commafy }} claim row(s) tripped a
+                                                data-quality rule. A high flag rate concentrated on one provider is a
+                                                classic signal for a targeted audit &mdash; example offending rows below.
+                                            </div>
+                                            <div class="table-responsive">
+                                                <table class="table table-sm table-bordered bg-white mb-0">
+                                                    <thead class="table-light">
+                                                        <tr>
+                                                            <th>Billing NPI</th><th>Servicing NPI</th><th>HCPCS</th>
+                                                            <th>Month</th><th class="text-end">Lines</th>
+                                                            <th class="text-end">Paid</th><th>Why flagged</th>
+                                                        </tr>
+                                                    </thead>
+                                                    <tbody>
+                                                        {% for ex in p.examples %}
+                                                        <tr>
+                                                            <td>{% if ex.billing %}<code>{{ ex.billing }}</code>{% else %}<span class="badge bg-danger">blank</span>{% endif %}</td>
+                                                            <td>{% if ex.servicing %}<code>{{ ex.servicing }}</code>{% else %}<span class="badge bg-danger">blank</span>{% endif %}</td>
+                                                            <td>{% if ex.hcpcs %}<code>{{ ex.hcpcs }}</code>{% else %}<span class="badge bg-danger">blank</span>{% endif %}</td>
+                                                            <td>{{ ex.month or '—' }}</td>
+                                                            <td class="text-end">{{ ex.lines if ex.lines is not none else '—' }}</td>
+                                                            <td class="text-end">{% if ex.paid is not none %}{{ ex.paid|money }}{% else %}—{% endif %}</td>
+                                                            <td class="small text-danger">{{ ex.reason }}</td>
+                                                        </tr>
+                                                        {% endfor %}
+                                                    </tbody>
+                                                </table>
+                                            </div>
+                                        </div>
+                                    </td>
+                                </tr>
+                                {% endif %}
+                                {% else %}
+                                <tr><td colspan="7" class="text-muted">No flagged providers in this sample.</td></tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Spending by clinical category -->
+    <div id="sec-category" class="claims-section row">
+        <div class="col-12 mb-4">
+            <div class="card shadow-sm">
+                <div class="card-body">
+                    <h5 class="card-title mb-3"><i class="bi bi-diagram-3 text-primary"></i> Spending by Clinical Category</h5>
+                    <p class="small text-muted mb-3">
+                        HCPCS/CPT codes rolled up into clinical categories so you can compare where the
+                        money goes and how average cost-per-line differs across service types.
+                    </p>
+                    <div class="metric-note mb-3">
+                        <i class="bi bi-info-circle"></i>
+                        <span class="tag tag-bin">Binned</span>
+                        each <code>HCPCS_CODE</code> is mapped into a clinical category (Level&nbsp;II HCPCS by
+                        leading letter; numeric CPT codes by well-known ranges such as Surgery or Radiology).
+                        <span class="tag tag-sum ms-2">Summed</span> paid dollars, claim lines and claims are
+                        totalled per category, and <strong>Providers</strong> is a
+                        <span class="tag tag-dedup">Deduped</span> count of distinct NPIs billing in it.
+                    </div>
+                    <div class="row align-items-center mb-2">
+                        <div class="col-lg-5 mb-3">
+                            <canvas id="categoryChart" style="max-height:300px;"></canvas>
+                        </div>
+                        <div class="col-lg-7">
+                    <div class="table-responsive">
+                        <table class="table table-hover table-sm align-middle">
+                            <thead>
+                                <tr>
+                                    <th>Category</th>
+                                    <th class="text-end">Total Paid</th>
+                                    <th class="text-end">% of Spend</th>
+                                    <th class="text-end">Claim Lines</th>
+                                    <th class="text-end">Avg / Line</th>
+                                    <th class="text-end">Providers</th>
+                                    <th style="min-width:120px;">Share</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% for c in a.categories %}
+                                <tr>
+                                    <td><strong>{{ c.category }}</strong></td>
+                                    <td class="text-end">{{ c.paid|money }}</td>
+                                    <td class="text-end">{{ c.pct_of_paid }}%</td>
+                                    <td class="text-end">{{ c.lines|commafy }}</td>
+                                    <td class="text-end">{{ c.avg_per_line|money }}</td>
+                                    <td class="text-end">{{ c.providers|commafy }}</td>
+                                    <td>
+                                        <div class="progress" style="height: 8px;">
+                                            <div class="progress-bar bg-primary js-bar" data-width="{{ c.pct_of_paid }}"></div>
+                                        </div>
+                                    </td>
+                                </tr>
+                                {% else %}
+                                <tr><td colspan="7" class="text-muted">No category data.</td></tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
+                        </div><!-- /col-lg-7 -->
+                    </div><!-- /row (chart + table) -->
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Provider peer comparison -->
+    <div id="sec-peers" class="claims-section row">
+        <div class="col-12 mb-4">
+            <div class="card shadow-sm border-danger">
+                <div class="card-body">
+                    <h5 class="card-title mb-3"><i class="bi bi-people text-danger"></i> Provider Peer-Comparison Outliers</h5>
+                    <p class="small text-muted mb-2">
+                        For each procedure code we treat every billing provider as a peer group and compare
+                        each provider's average payment-per-line to the code-wide peer average. Providers
+                        billing <strong>&ge; {{ a.peer_outlier_multiple }}&times;</strong> the peer average
+                        (with at least {{ a.peer_min_lines }} lines and 3+ peers)
+                        are flagged &mdash; a classic signal for up-coding or overbilling on the
+                        <em>same</em> service others deliver far more cheaply.
+                    </p>
+                    <div class="table-responsive">
+                        <table class="table table-hover table-sm align-middle">
+                            <thead>
+                                <tr>
+                                    <th>#</th><th>Provider NPI</th><th>Code</th><th>Category</th>
+                                    <th class="text-end">Provider Avg/Line</th>
+                                    <th class="text-end">Peer Avg/Line</th>
+                                    <th class="text-end">vs Peers</th>
+                                    <th class="text-end">Lines</th>
+                                    <th></th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% for p in a.peer_outliers %}
+                                <tr>
+                                    <td>{{ loop.index }}</td>
+                                    <td><code>{{ p.npi }}</code></td>
+                                    <td><code>{{ p.code }}</code></td>
+                                    <td class="small">{{ p.category }}</td>
+                                    <td class="text-end">{{ p.provider_avg|money }}</td>
+                                    <td class="text-end">{{ p.peer_avg|money }}</td>
+                                    <td class="text-end">
+                                        <span class="badge bg-{% if p.ratio >= 20 %}danger{% elif p.ratio >= 10 %}warning{% else %}secondary{% endif %}">{{ p.ratio }}×</span>
+                                    </td>
+                                    <td class="text-end">{{ p.lines|commafy }}</td>
+                                    <td class="text-end">
+                                        <button class="btn btn-sm btn-outline-danger py-0" type="button" data-bs-toggle="collapse" data-bs-target="#peer-{{ loop.index }}">
+                                            <i class="bi bi-search"></i>
+                                        </button>
+                                    </td>
+                                </tr>
+                                <tr class="collapse" id="peer-{{ loop.index }}">
+                                    <td colspan="9" class="bg-light small">
+                                        <div class="p-2">
+                                            <strong>Why this is an outlier:</strong>
+                                            Provider <code>{{ p.npi }}</code> bills
+                                            <strong>{{ p.provider_avg|money }}</strong> per line for code
+                                            <code>{{ p.code }}</code> ({{ p.category }}), while its
+                                            <strong>{{ p.peers|commafy }}</strong> peers billing the same code
+                                            average only <strong>{{ p.peer_avg|money }}</strong> per line &mdash;
+                                            that's <strong>{{ p.ratio }}×</strong> higher across
+                                            {{ p.lines|commafy }} line(s) totalling {{ p.paid|money }}.
+                                            Because peers deliver the identical service far more cheaply, this
+                                            gap is a strong candidate for an up-coding / overbilling review.
+                                        </div>
+                                    </td>
+                                </tr>
+                                {% else %}
+                                <tr><td colspan="9" class="text-muted">No peer outliers in this sample (need providers sharing the same code with enough volume).</td></tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    </div><!-- /main content col -->
+    </div><!-- /row -->
+
+    {% endif %}
+</div>
+
+{% if a.available %}
+<!-- Claims data chatbot widget -->
+<div id="claimsChat" data-sample="{{ a.sample_rows_setting }}">
+    <button id="claimsChatToggle" class="btn btn-primary rounded-circle shadow" type="button"
+            title="Ask the claims data assistant">
+        <i class="bi bi-chat-dots-fill"></i>
+    </button>
+    <div id="claimsChatPanel" class="card shadow-lg d-none">
+        <div class="card-header bg-primary text-white d-flex justify-content-between align-items-center">
+            <span><i class="bi bi-robot"></i> Claims Data Assistant</span>
+            <button id="claimsChatClose" type="button" class="btn-close btn-close-white" aria-label="Close"></button>
+        </div>
+        <div id="claimsChatBody" class="card-body"></div>
+        <div class="card-footer p-2">
+            <form id="claimsChatForm" class="d-flex gap-2">
+                <input id="claimsChatInput" type="text" class="form-control form-control-sm"
+                       placeholder="Ask about the data..." autocomplete="off">
+                <button type="submit" class="btn btn-sm btn-primary"><i class="bi bi-send"></i></button>
+            </form>
+        </div>
+    </div>
+</div>
+
+<style>
+    #claimsChat { position: fixed; bottom: 24px; right: 24px; z-index: 1050; }
+    #claimsChatToggle { width: 56px; height: 56px; font-size: 1.4rem; }
+    #claimsChatPanel { position: absolute; bottom: 70px; right: 0; width: 360px; max-width: 90vw; }
+    #claimsChatBody { height: 340px; overflow-y: auto; background: #f8f9fa; font-size: .875rem; }
+    .chat-msg { margin-bottom: .6rem; display: flex; }
+    .chat-msg.bot { justify-content: flex-start; }
+    .chat-msg.user { justify-content: flex-end; }
+    .chat-bubble { padding: .5rem .75rem; border-radius: .75rem; max-width: 85%; white-space: pre-wrap; }
+    .chat-msg.bot .chat-bubble { background: #fff; border: 1px solid #dee2e6; }
+    .chat-msg.user .chat-bubble { background: #0d6efd; color: #fff; }
+    .chat-chip { cursor: pointer; font-size: .75rem; margin: .15rem; }
+    .chat-bubble code { background: rgba(0,0,0,.06); padding: 0 .2rem; border-radius: .2rem; }
+    .chat-msg.user .chat-bubble code { background: rgba(255,255,255,.2); color: #fff; }
+</style>
+
+<script>
+(function() {
+    const root = document.getElementById('claimsChat');
+    const toggle = document.getElementById('claimsChatToggle');
+    const panel = document.getElementById('claimsChatPanel');
+    const closeBtn = document.getElementById('claimsChatClose');
+    const body = document.getElementById('claimsChatBody');
+    const form = document.getElementById('claimsChatForm');
+    const input = document.getElementById('claimsChatInput');
+    const sample = root.getAttribute('data-sample') || '';
+    let greeted = false;
+
+    function esc(s) {
+        return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    }
+    // Minimal markdown: **bold**, `code`, and newlines.
+    function fmt(text) {
+        let html = esc(text)
+            .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+            .replace(/`([^`]+)`/g, '<code>$1</code>')
+            .replace(/\n/g, '<br>');
+        return html;
+    }
+    function addMsg(text, who) {
+        const wrap = document.createElement('div');
+        wrap.className = 'chat-msg ' + who;
+        wrap.innerHTML = '<div class="chat-bubble">' + fmt(text) + '</div>';
+        body.appendChild(wrap);
+        body.scrollTop = body.scrollHeight;
+    }
+    function addChips(suggestions) {
+        if (!suggestions || !suggestions.length) return;
+        const wrap = document.createElement('div');
+        wrap.className = 'd-flex flex-wrap mb-2';
+        suggestions.forEach(function(s) {
+            const chip = document.createElement('span');
+            chip.className = 'badge bg-light text-primary border chat-chip';
+            chip.textContent = s;
+            chip.addEventListener('click', function() { ask(s); });
+            wrap.appendChild(chip);
+        });
+        body.appendChild(wrap);
+        body.scrollTop = body.scrollHeight;
+    }
+    function ask(question) {
+        addMsg(question, 'user');
+        input.value = '';
+        const typing = document.createElement('div');
+        typing.className = 'chat-msg bot';
+        typing.innerHTML = '<div class="chat-bubble text-muted">...</div>';
+        body.appendChild(typing);
+        body.scrollTop = body.scrollHeight;
+        fetch('/api/claims/chat', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ question: question, sample: sample })
+        })
+        .then(function(r) { return r.json(); })
+        .then(function(d) {
+            typing.remove();
+            addMsg(d.answer, 'bot');
+            addChips(d.suggestions);
+        })
+        .catch(function() {
+            typing.remove();
+            addMsg('Sorry, something went wrong answering that.', 'bot');
+        });
+    }
+    function openPanel() {
+        panel.classList.remove('d-none');
+        if (!greeted) {
+            greeted = true;
+            addMsg("Hi! I'm grounded on the analyzed sample. Ask me anything about the claims data.", 'bot');
+            addChips(['How much was paid in total?', 'Who are the top providers?',
+                      'What is the optimization potential?', 'How good is the data quality?']);
+        }
+        input.focus();
+    }
+    toggle.addEventListener('click', function() {
+        panel.classList.contains('d-none') ? openPanel() : panel.classList.add('d-none');
+    });
+    closeBtn.addEventListener('click', function() { panel.classList.add('d-none'); });
+    form.addEventListener('submit', function(e) {
+        e.preventDefault();
+        const q = input.value.trim();
+        if (q) ask(q);
+    });
+})();
+</script>
+{% endif %}
+{% endblock %}
+
+{% block scripts %}
+{% if a.available %}
+<script>
+    const A = {{ a | tojson }};
+
+    // ---- Money formatter (matches server-side 'money' filter) ----
+    function fmtMoney(n) {
+        n = Number(n) || 0;
+        const sign = n < 0 ? '-' : '';
+        const abs = Math.abs(n);
+        const units = [[1e12, 'T'], [1e9, 'B'], [1e6, 'M'], [1e3, 'K']];
+        for (const [d, s] of units) {
+            if (abs >= d) return sign + '$' + (abs / d).toFixed(2) + s;
+        }
+        return sign + '$' + abs.toFixed(2);
+    }
+
+    // ---- Animate concentration bars (widths supplied via data-width) ----
+    document.querySelectorAll('.js-bar').forEach(function(bar) {
+        const w = Math.max(0, Math.min(100, parseFloat(bar.dataset.width) || 0));
+        bar.style.width = w + '%';
+    });
+
+    // ---- Side-nav scrollspy + smooth scrolling ----
+    (function() {
+        if (window.bootstrap && bootstrap.ScrollSpy) {
+            new bootstrap.ScrollSpy(document.body, {
+                target: '#claimsSideNav',
+                rootMargin: '0px 0px -75%'
+            });
+        }
+        document.querySelectorAll('#claimsSideNav .nav-link').forEach(function(link) {
+            link.addEventListener('click', function(e) {
+                const target = document.querySelector(link.getAttribute('href'));
+                if (target) {
+                    e.preventDefault();
+                    target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                    history.replaceState(null, '', link.getAttribute('href'));
+                }
+            });
+        });
+    })();
+
+    // ---- Auto insights ----
+    (function() {
+        const notes = [];
+        const issues = (A.issues || []).slice().sort((x, y) => y.count - x.count);
+        const top = issues.filter(i => i.count > 0)[0];
+        if (top) notes.push(`Most common issue: <strong>${top.label}</strong> — ${top.count.toLocaleString()} rows (${top.pct}%).`);
+        if (A.exposure_total > 0) notes.push(`Estimated <strong>${fmtMoney(A.exposure_total)}</strong> (${A.exposure_pct}% of paid dollars) sits on rows with a data-quality issue — this is your recovery/audit target.`);
+        if (A.top10_dollars_pct >= 50) notes.push(`Spend is highly concentrated: the <strong>top 10 providers</strong> account for <strong>${A.top10_dollars_pct}%</strong> of all paid dollars — a natural place to focus audits.`);
+        if (A.clean_pct < 70) notes.push('Overall data quality is <strong>poor</strong>; prioritize provider-NPI completeness and code validation before analysis.');
+        else if (A.clean_pct < 90) notes.push('Data quality is <strong>moderate</strong>; a meaningful share of rows have issues.');
+        else notes.push('Data quality is <strong>strong</strong> across the sampled rows.');
+        const payout = (A.issues || []).find(i => i.key === 'payment_amount_exceeded');
+        if (payout && payout.count > 0) notes.push(`Detected <strong>${payout.count.toLocaleString()}</strong> payment outliers exceeding the per-line threshold — review for possible overpayments.`);
+        const hr = A.high_risk_providers || [];
+        if (hr.length && hr[0].flag_rate >= 50) notes.push(`Provider <code>${hr[0].npi}</code> has a <strong>${hr[0].flag_rate}%</strong> data-quality flag rate — prioritize for review.`);
+        if (A.yearly && A.yearly.length > 1) {
+            const last = A.yearly[A.yearly.length - 1];
+            if (last.yoy_pct !== null && last.yoy_pct !== undefined)
+                notes.push(`Latest year (${last.year}) spend changed <strong>${last.yoy_pct}%</strong> vs. the prior year.`);
+        }
+        const peers = A.peer_outliers || [];
+        if (peers.length) {
+            const p = peers[0];
+            notes.push(`Peer outlier: provider <code>${p.npi}</code> bills <strong>${p.ratio}×</strong> its peers for code <code>${p.code}</code> (${fmtMoney(p.provider_avg)} vs ${fmtMoney(p.peer_avg)} per line) — a strong up-coding signal.`);
+        }
+        const cats = A.categories || [];
+        if (cats.length) notes.push(`Largest spend category: <strong>${cats[0].category}</strong> at ${fmtMoney(cats[0].paid)} (${cats[0].pct_of_paid}% of paid dollars).`);
+        if (A.is_sample) notes.push(`Figures are based on a sample of the first ${A.rows_analyzed.toLocaleString()} rows of a ${A.file_size_human} file. Increase the sample size above for a broader view.`);
+        document.getElementById('claimsAutoInsights').innerHTML = '<ul class="mb-0">' + notes.map(n => `<li>${n}</li>`).join('') + '</ul>';
+    })();
+
+    // ---- Monthly spend trend ----
+    const monthly = A.monthly || [];
+    new Chart(document.getElementById('monthlyChart').getContext('2d'), {
+        type: 'line',
+        data: {
+            labels: monthly.map(m => m.month),
+            datasets: [{
+                label: 'Total Paid ($)',
+                data: monthly.map(m => m.paid),
+                borderColor: '#198754',
+                backgroundColor: 'rgba(25,135,84,0.15)',
+                fill: true,
+                tension: 0.25,
+                pointRadius: 2
+            }]
+        },
+        options: {
+            responsive: true,
+            plugins: { legend: { display: false } },
+            scales: { y: { ticks: { callback: v => '$' + Number(v).toLocaleString() } } }
+        }
+    });
+
+    // ---- Data quality issues bar ----
+    const issues = (A.issues || []).filter(i => i.count > 0);
+    new Chart(document.getElementById('issuesChart').getContext('2d'), {
+        type: 'bar',
+        data: {
+            labels: issues.map(i => i.label),
+            datasets: [{
+                label: 'Rows affected',
+                data: issues.map(i => i.count),
+                backgroundColor: issues.map(i => i.severity === 'high' ? '#dc3545' : i.severity === 'medium' ? '#ffc107' : '#6c757d'),
+                borderRadius: 4
+            }]
+        },
+        options: {
+            responsive: true,
+            indexAxis: 'y',
+            plugins: { legend: { display: false } },
+            scales: { x: { beginAtZero: true } }
+        }
+    });
+
+    // ---- Spend by clinical category (doughnut) ----
+    (function() {
+        const el = document.getElementById('categoryChart');
+        if (!el) return;
+        const cats = (A.categories || []).slice(0, 8);
+        const palette = ['#0d6efd', '#198754', '#dc3545', '#ffc107', '#6f42c1',
+                         '#fd7e14', '#20c997', '#0dcaf0', '#6c757d'];
+        new Chart(el.getContext('2d'), {
+            type: 'doughnut',
+            data: {
+                labels: cats.map(c => c.category),
+                datasets: [{
+                    data: cats.map(c => c.paid),
+                    backgroundColor: cats.map((_, i) => palette[i % palette.length]),
+                    borderWidth: 1
+                }]
+            },
+            options: {
+                responsive: true,
+                plugins: {
+                    legend: { position: 'bottom', labels: { boxWidth: 12, font: { size: 10 } } },
+                    tooltip: { callbacks: { label: ctx => ctx.label + ': ' + fmtMoney(ctx.parsed) } }
+                }
+            }
+        });
+    })();
+
+    // ---- Year-over-year spend (bar) ----
+    (function() {
+        const el = document.getElementById('yearlyChart');
+        if (!el) return;
+        const yearly = A.yearly || [];
+        new Chart(el.getContext('2d'), {
+            type: 'bar',
+            data: {
+                labels: yearly.map(y => y.year),
+                datasets: [{
+                    label: 'Total Paid ($)',
+                    data: yearly.map(y => y.paid),
+                    backgroundColor: '#198754',
+                    borderRadius: 4
+                }]
+            },
+            options: {
+                responsive: true,
+                plugins: {
+                    legend: { display: false },
+                    tooltip: { callbacks: { label: ctx => fmtMoney(ctx.parsed.y) } }
+                },
+                scales: { y: { ticks: { callback: v => '$' + Number(v).toLocaleString() } } }
+            }
+        });
+        })();
+
+        // ---- Top 10 providers by spend (horizontal bar) ----
+        (function() {
+            const el = document.getElementById('providersChart');
+            if (!el) return;
+            const provs = (A.top_providers || []).slice(0, 10);
+            new Chart(el.getContext('2d'), {
+                type: 'bar',
+                data: {
+                    labels: provs.map(p => p.npi || 'blank'),
+                    datasets: [{
+                        label: 'Total Paid ($)',
+                        data: provs.map(p => p.paid),
+                        backgroundColor: '#0d6efd',
+                        borderRadius: 4
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    indexAxis: 'y',
+                    plugins: {
+                        legend: { display: false },
+                        tooltip: { callbacks: {
+                            label: ctx => fmtMoney(ctx.parsed.x),
+                            afterLabel: ctx => (provs[ctx.dataIndex].claims || 0).toLocaleString() + ' claims'
+                        } }
+                    },
+                    scales: { x: { beginAtZero: true, ticks: { callback: v => '$' + Number(v).toLocaleString() } } }
+                }
+            });
+        })();
+
+        // ---- Top 10 HCPCS codes by spend (bar) ----
+        (function() {
+            const el = document.getElementById('hcpcsChart');
+            if (!el) return;
+            const codes = (A.top_hcpcs || []).slice(0, 10);
+            new Chart(el.getContext('2d'), {
+                type: 'bar',
+                data: {
+                    labels: codes.map(c => c.code || 'blank'),
+                    datasets: [{
+                        label: 'Total Paid ($)',
+                        data: codes.map(c => c.paid),
+                        backgroundColor: '#198754',
+                        borderRadius: 4
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    indexAxis: 'y',
+                    plugins: {
+                        legend: { display: false },
+                        tooltip: { callbacks: {
+                            label: ctx => fmtMoney(ctx.parsed.x),
+                            afterLabel: ctx => (codes[ctx.dataIndex].lines || 0).toLocaleString() + ' claim lines'
+                        } }
+                    },
+                    scales: { x: { beginAtZero: true, ticks: { callback: v => '$' + Number(v).toLocaleString() } } }
+                }
+            });
+        })();
+    </script>
+{% endif %}
+{% endblock %}

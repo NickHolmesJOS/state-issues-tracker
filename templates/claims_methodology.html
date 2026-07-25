@@ -1,0 +1,287 @@
+{% extends "base.html" %}
+
+{% block title %}Claims Data — Methodology & Data Dictionary{% endblock %}
+
+{% block content %}
+<div class="container-lg py-5">
+    <div class="row mb-4">
+        <div class="col-12 d-flex flex-wrap justify-content-between align-items-start gap-2">
+            <div>
+                <h1 class="display-5 mb-2">
+                    <i class="bi bi-book"></i> Methodology &amp; Data Dictionary
+                </h1>
+                <p class="text-muted mb-0">
+                    How every metric on the <a href="/claims">Claims Data Analysis</a> page is calculated —
+                    which columns feed it, and whether it is <strong>summed</strong>, <strong>deduped</strong>,
+                    <strong>binned</strong>, or <strong>derived</strong>.
+                </p>
+            </div>
+            <a href="/claims" class="btn btn-sm btn-outline-primary">
+                <i class="bi bi-arrow-left"></i> Back to Claims Data
+            </a>
+        </div>
+    </div>
+
+    <style>
+        .tag {
+            display: inline-block;
+            font-size: .6875rem;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: .03em;
+            padding: .1rem .45rem;
+            border-radius: .25rem;
+        }
+        .tag-sum { background: #d1e7dd; color: #0f5132; }
+        .tag-dedup { background: #fff3cd; color: #664d03; }
+        .tag-bin { background: #cfe2ff; color: #084298; }
+        .tag-derived { background: #e2d9f3; color: #493174; }
+        .tag-raw { background: #e9ecef; color: #343a40; }
+    </style>
+
+    <!-- Legend -->
+    <div class="card shadow-sm mb-4">
+        <div class="card-body">
+            <h5 class="card-title"><i class="bi bi-tags text-info"></i> Aggregation legend</h5>
+            <div class="row small">
+                <div class="col-md-6 mb-2"><span class="tag tag-raw">Raw</span> a column read straight from the CSV, unchanged.</div>
+                <div class="col-md-6 mb-2"><span class="tag tag-sum">Summed</span> values added up across many rows.</div>
+                <div class="col-md-6 mb-2"><span class="tag tag-dedup">Deduped</span> repeated keys collapsed or counted once.</div>
+                <div class="col-md-6 mb-2"><span class="tag tag-bin">Binned</span> individual rows grouped into buckets (category, year, month).</div>
+                <div class="col-md-6 mb-2"><span class="tag tag-derived">Derived</span> computed from other metrics (ratios, averages, %).</div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Source & sampling -->
+    <div class="card shadow-sm mb-4">
+        <div class="card-body">
+            <h5 class="card-title"><i class="bi bi-hdd-stack text-primary"></i> Source &amp; sampling</h5>
+            {% if a.available %}
+            <p class="small text-muted mb-2">
+                The source file <code>{{ a.file_name }}</code> is <strong>{{ a.file_size_human }}</strong>
+                (hundreds of millions of rows). It is far too large to load into memory, so the analysis
+                <strong>streams</strong> the file row-by-row and stops after a bounded
+                <strong>sample</strong> of rows.
+            </p>
+            <ul class="small mb-0">
+                <li>Current run analyzed <strong>{{ a.rows_analyzed|commafy }}</strong> rows
+                    {% if a.is_sample %}(a sample — the file has many more){% else %}(the whole file fit within the sample limit){% endif %}.</li>
+                <li>Because it is a <em>head sample</em>, figures are directional; increase the sample size on the
+                    Claims Data page for a broader view.</li>
+                <li>Results are cached per (file, modified-time, sample size) so re-loading the page is fast.</li>
+            </ul>
+            {% else %}
+            <div class="alert alert-warning mb-0">
+                The CSV was not found at <code>Data/medicaid-provider-spending.csv</code>, so live figures
+                are unavailable. The definitions below still apply.
+            </div>
+            {% endif %}
+        </div>
+    </div>
+
+    <!-- Raw columns -->
+    <div class="card shadow-sm mb-4">
+        <div class="card-body">
+            <h5 class="card-title mb-3"><i class="bi bi-table text-secondary"></i> Raw CSV columns</h5>
+            <div class="table-responsive">
+                <table class="table table-sm align-middle">
+                    <thead class="table-light">
+                        <tr><th>Column</th><th>Meaning</th><th>Grain / notes</th></tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td><code>BILLING_PROVIDER_NPI_NUM</code></td>
+                            <td>NPI of the provider that submitted the bill.</td>
+                            <td class="small text-muted">May be blank; part of the duplicate/attribution key.</td>
+                        </tr>
+                        <tr>
+                            <td><code>SERVICING_PROVIDER_NPI_NUM</code></td>
+                            <td>NPI of the provider that delivered the care.</td>
+                            <td class="small text-muted">May be blank; used as a fallback provider id.</td>
+                        </tr>
+                        <tr>
+                            <td><code>HCPCS_CODE</code></td>
+                            <td>Procedure / service code (HCPCS Level II or CPT).</td>
+                            <td class="small text-muted">Valid = 5 chars (5 digits, or a letter + 4 digits).</td>
+                        </tr>
+                        <tr>
+                            <td><code>CLAIM_FROM_MONTH</code></td>
+                            <td>Service month in <code>YYYY-MM</code> format.</td>
+                            <td class="small text-muted">Feeds the monthly &amp; yearly time bins.</td>
+                        </tr>
+                        <tr>
+                            <td><code>TOTAL_PATIENTS</code></td>
+                            <td>Distinct patients in that provider × code × month roll-up.</td>
+                            <td class="small text-muted">Already aggregated per row (not per patient).</td>
+                        </tr>
+                        <tr>
+                            <td><code>TOTAL_CLAIM_LINES</code></td>
+                            <td>Number of claim lines in that roll-up.</td>
+                            <td class="small text-muted">Denominator for per-line averages.</td>
+                        </tr>
+                        <tr>
+                            <td><code>TOTAL_PAID</code></td>
+                            <td>Dollars paid for that roll-up.</td>
+                            <td class="small text-muted">Core spend measure; summed everywhere.</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+            <p class="small text-muted mb-0">
+                <i class="bi bi-info-circle"></i>
+                <strong>Grain:</strong> each CSV row is one
+                <code>(billing NPI × servicing NPI × HCPCS × month)</code> roll-up — <em>not</em> one claim and
+                <em>not</em> one patient. This matters for how the metrics below are interpreted.
+            </p>
+        </div>
+    </div>
+
+    <!-- Derived metrics dictionary -->
+    <div class="card shadow-sm mb-4">
+        <div class="card-body">
+            <h5 class="card-title mb-3"><i class="bi bi-calculator text-success"></i> Metric definitions</h5>
+            <div class="table-responsive">
+                <table class="table table-hover align-middle">
+                    <thead class="table-light">
+                        <tr>
+                            <th>Metric</th>
+                            <th style="min-width:120px;">Aggregation</th>
+                            <th>How it is calculated</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td><strong>Total Paid</strong></td>
+                            <td><span class="tag tag-sum">Summed</span></td>
+                            <td class="small">Sum of <code>TOTAL_PAID</code> over every sampled row.</td>
+                        </tr>
+                        <tr>
+                            <td><strong>Total Patients</strong></td>
+                            <td><span class="tag tag-sum">Summed</span></td>
+                            <td class="small">Sum of <code>TOTAL_PATIENTS</code>. <em>Not</em> de-duplicated across
+                                months — a person seen in 3 months counts 3 times.</td>
+                        </tr>
+                        <tr>
+                            <td><strong>Claim Lines</strong></td>
+                            <td><span class="tag tag-sum">Summed</span></td>
+                            <td class="small">Sum of <code>TOTAL_CLAIM_LINES</code>.</td>
+                        </tr>
+                        <tr>
+                            <td><strong>Avg Paid / Line</strong></td>
+                            <td><span class="tag tag-derived">Derived</span></td>
+                            <td class="small">Total Paid ÷ Claim Lines.</td>
+                        </tr>
+                        <tr>
+                            <td><strong>Avg Paid / Patient</strong></td>
+                            <td><span class="tag tag-derived">Derived</span></td>
+                            <td class="small">Total Paid ÷ Total Patients.</td>
+                        </tr>
+                        <tr>
+                            <td><strong>Unique Providers / HCPCS</strong></td>
+                            <td><span class="tag tag-dedup">Deduped</span></td>
+                            <td class="small">Distinct NPIs and distinct HCPCS codes seen in the sample.</td>
+                        </tr>
+                        <tr>
+                            <td><strong>Data Quality %</strong></td>
+                            <td><span class="tag tag-derived">Derived</span></td>
+                            <td class="small">Share of rows with <em>no</em> major issue (missing NPI, duplicate,
+                                invalid code, or payment outlier).</td>
+                        </tr>
+                        <tr>
+                            <td><strong>Duplicate Claim Rows</strong></td>
+                            <td><span class="tag tag-dedup">Deduped</span></td>
+                            <td class="small">Rows repeating the key
+                                <code>(billing NPI, servicing NPI, HCPCS, month)</code>. First is kept; each repeat
+                                counts as a duplicate.</td>
+                        </tr>
+                        <tr>
+                            <td><strong>Financial Exposure</strong></td>
+                            <td><span class="tag tag-sum">Summed</span></td>
+                            <td class="small">Paid dollars sitting on rows with a quality issue, capped at Total Paid
+                                to avoid double-counting.</td>
+                        </tr>
+                        <tr>
+                            <td><strong>Spend Concentration</strong></td>
+                            <td><span class="tag tag-derived">Derived</span></td>
+                            <td class="small">Providers ranked by summed paid; % of total held by the top 1% / 10% / 10.</td>
+                        </tr>
+                        <tr>
+                            <td><strong>Clinical Category totals</strong></td>
+                            <td><span class="tag tag-bin">Binned</span> + <span class="tag tag-sum">Summed</span></td>
+                            <td class="small">Each HCPCS binned into a clinical category (Level II by leading letter,
+                                CPT by numeric range), then paid/lines/claims summed per category.</td>
+                        </tr>
+                        <tr>
+                            <td><strong>Monthly &amp; Year-over-Year Spend</strong></td>
+                            <td><span class="tag tag-bin">Binned</span> + <span class="tag tag-sum">Summed</span></td>
+                            <td class="small">Paid summed into month / year bins from <code>CLAIM_FROM_MONTH</code>;
+                                YoY % is the change from the prior year.</td>
+                        </tr>
+                        <tr>
+                            <td><strong>Costliest Codes (Avg/Line)</strong></td>
+                            <td><span class="tag tag-derived">Derived</span></td>
+                            <td class="small">Per-code paid ÷ lines; codes with &lt; 10 lines excluded as noise.
+                                ×Avg = code avg ÷ sample-wide avg.</td>
+                        </tr>
+                        <tr>
+                            <td><strong>Peer-Comparison Outliers</strong></td>
+                            <td><span class="tag tag-derived">Derived</span></td>
+                            <td class="small">For each code, a provider's avg/line vs. the code-wide peer avg.
+                                Flagged at ≥ {{ a.peer_outlier_multiple if a.available else 5 }}× with ≥
+                                {{ a.peer_min_lines if a.available else 20 }} lines and 3+ peers.</td>
+                        </tr>
+                        <tr>
+                            <td><strong>Optimization Potential</strong></td>
+                            <td><span class="tag tag-sum">Summed</span></td>
+                            <td class="small">Duplicate-payment dollars + per-line outlier dollars + peer-benchmark
+                                excess (provider paid above peers × their lines).</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <!-- Data-quality rules -->
+    <div class="card shadow-sm mb-4">
+        <div class="card-body">
+            <h5 class="card-title mb-3"><i class="bi bi-clipboard2-check text-danger"></i> Data-quality rules</h5>
+            <p class="small text-muted">Each rule flags a row; a single row can trip several rules, so the
+                individual counts can exceed the sample size.</p>
+            {% if a.available %}
+            <div class="table-responsive">
+                <table class="table table-sm align-middle">
+                    <thead class="table-light">
+                        <tr><th>Rule</th><th>Severity</th><th class="text-end">Rows</th><th>What it means</th></tr>
+                    </thead>
+                    <tbody>
+                        {% for issue in a.issues %}
+                        <tr>
+                            <td><strong>{{ issue.label }}</strong></td>
+                            <td>
+                                <span class="badge bg-{% if issue.severity == 'high' %}danger{% elif issue.severity == 'medium' %}warning{% else %}secondary{% endif %}">
+                                    {{ issue.severity|title }}
+                                </span>
+                            </td>
+                            <td class="text-end">{{ issue.count|commafy }}</td>
+                            <td class="small text-muted">{{ issue.description }}</td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+            {% endif %}
+        </div>
+    </div>
+
+    <div class="text-center mb-3">
+        <a href="/claims" class="btn btn-primary">
+            <i class="bi bi-arrow-left"></i> Back to Claims Data Analysis
+        </a>
+        <a href="/claims/optimize" class="btn btn-outline-success">
+            <i class="bi bi-lightbulb"></i> Optimization View
+        </a>
+    </div>
+</div>
+{% endblock %}
